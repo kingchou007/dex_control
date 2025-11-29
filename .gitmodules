@@ -1,0 +1,3 @@
+[submodule "dex_control/dependencies/libfranka"]
+	path = dex_control/dependencies/libfranka
+	url = https://github.com/frankarobotics/libfranka.git

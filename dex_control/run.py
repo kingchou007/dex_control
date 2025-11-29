@@ -6,12 +6,11 @@ from scipy.spatial.transform import Rotation as R
 
 class SimpleRunner:
     def __init__(self, nuc_addr: str = "tcp://192.168.1.7:4242", hz: float = 5.0):
-        """nuc_addr 是 NUC 的 IP 和 zerorpc 端口，hz 是轮询频率。"""
         self.client = NucRobotClient(nuc_addr)
         self.dt = 1.0 / hz
 
     def step_once(self):
-        """拉一次状态，并做你想做的处理。"""
+
         state = self.client.get_state()
         # print(state["joint_positions"])
         # print(state.joint_velocities)
@@ -24,32 +23,17 @@ class SimpleRunner:
         rot_matrix = np.array(state["end_effector_orientation"]).reshape(3, 3)
         euler_angles = R.from_matrix(rot_matrix).as_euler('xyz', degrees=False)
         print(euler_angles)
-
-
-        # print(state["external_wrench"])
-        # print(state)
-        # q = state["joint_positions"]
-        # ee_pos = state["end_effector_position"]
-
-        # 这里先简单打印，你之后可以替换成写入 env、喂 policy 等
-        # print("q:", [round(v, 3) for v in q])
-        # print("ee:", [round(v, 3) for v in ee_pos])
-        # print("-" * 40)
-
-    # def run(self):
-    #     """以固定频率循环读取状态。"""
-    #     try:
-    #         while True:
-    #             t0 = time.time()
-    #             self.step_once()
-    #             elapsed = time.time() - t0
-    #             time.sleep(max(0.0, self.dt - elapsed))
-    #     except KeyboardInterrupt:
-    #         print("Runner stopped by user.")
-
-# if __name__ == "__main__":
-#     runner = SimpleRunner(nuc_addr="tcp://192.168.1.7:4242", hz=30.0)
-#     runner.run()
+    
+    
+    def run(self):
+        try:
+            while True:
+                t0 = time.time()
+                self.step_once()
+                elapsed = time.time() - t0
+                time.sleep(max(0.0, self.dt - elapsed))
+        except KeyboardInterrupt:
+            print("Runner stopped by user.")
 
 
 if __name__ == "__main__":

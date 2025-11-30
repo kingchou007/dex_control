@@ -44,15 +44,26 @@ class FrankaWrapper:
         self.started = False
 
         self.controller_type = controller_type
-        self.controller.switch(self.controller_type)
         
-        # TODO: make this configurable
+        # TODO: need to test this with the real robot.
         # Default OSC gains for end-effector control
-        self.default_ee_kp = np.array([300.0, 300.0, 300.0, 1000.0, 1000.0, 1000.0])
-        self.default_ee_kd = np.ones(6) * 10.0
-        
-        # Default update frequency
-        self.default_freq = 100.0
+        if self.controller_type == "osc":
+            self.controller.switch("osc")
+            self.controller.ee_kp = np.array([300, 300, 300, 1000, 1000, 1000])
+            self.controller.ee_kd = np.ones(6) * 10.0
+        # Joint-space impedance control
+        elif self.controller_type == "impedance":
+            self.controller.switch("impedance")
+            self.controller.kp = np.ones(7) * 80.0
+            self.controller.kd = np.ones(7) * 4.0
+        else:
+            raise ValueError(f"Invalid controller type: {self.controller_type}")
+
+        self.controller.set_freq(50)
+
+        # start the controller (Test)
+        await self.controller.start()
+
     
     async def start(self):
         """
@@ -70,10 +81,6 @@ class FrankaWrapper:
         """ Stop the robot controller."""
         await self.controller.stop()
         self.started = False
-    
-    def get_state(self) -> dict:
-        """ Get current robot state. """
-        return self.controller.robot.state
     
     async def move_ee_pose(
         self, 
@@ -128,12 +135,18 @@ class FrankaWrapper:
      
         joint_positions = np.array(joint_positions)
         await self.controller.move(joint_positions.tolist())
-     
+    
+    def get_state(self) -> dict:
+        """ Get current robot state. """
+        return self.controller.robot.state
 
 if __name__ == "__main__":
     # Start ZeroRPC server for remote control
     ip = "192.168.1.33"
-    server = FrankaWrapper(ip)
+
+    # before start, we should check, what controller type should be used.
+    controller_type = "osc"
+    server = FrankaWrapper(ip, controller_type)
     
     # Start the robot controller
     print("Starting robot controller...")

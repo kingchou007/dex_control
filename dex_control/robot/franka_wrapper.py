@@ -12,6 +12,7 @@ Reference: https://timschneider42.github.io/franky/index.html
 """
 
 import time
+import click
 from typing import List, Optional, Dict, Any, Union
 
 from franky import (
@@ -135,25 +136,39 @@ class FrankaWrapper:
         self.gripper.open(self.speed)
 
 
-    def get_state(self) -> np.ndarray:
+    def get_state(self):
         """Retrieve current robot state.
 
         Returns:
-            state: RobotState object wrapped in a numpy array.
+            dict: Dictionary containing all available robot state information. No fixed format—use as needed.
             
         See also:
             https://timschneider42.github.io/franky/structfranky_1_1_robot_state.html
         """
-        return np.array(self.robot.state)
+
+        state = self.robot.state  
+        return {
+            "q": np.array(state.q).tolist(),
+            "q_d": np.array(state.q_d).tolist(),
+            "dq": np.array(state.dq).tolist(),
+            "dq_d": np.array(state.dq_d).tolist(),
+            "ddq_d": np.array(state.ddq_d).tolist(),
+            "tau_J": np.array(state.tau_J).tolist(),
+            "tau_J_d": np.array(state.tau_J_d).tolist(),
+            "dtau_J": np.array(state.dtau_J).tolist(),
+            "O_T_EE": np.array(state.O_T_EE).tolist(),
+        }
 
 
-    def get_joint_positions(self) -> np.ndarray:
+    def get_joint_positions(self):
         """Get the current joint positions of the robot.
 
         Returns:
-            np.ndarray: Array of joint angles [q1, q2, ..., q7].
+            List[float]: Array of joint angles [q1, q2, ..., q7].
+                        Converted to list for RPC serialization.
         """
-        return np.array(self.robot.state.q)
+        # Convert to list for RPC serialization
+        return np.array(self.robot.state.q).tolist()
 
 
     def get_ee_pose(self) -> Dict[str, List[float]]:
@@ -165,7 +180,6 @@ class FrankaWrapper:
                 "q": List of quaternion components [x, y, z, w].
         """
         ee = self.robot.state.O_T_EE
-        print(f"ee: {ee}")
         return {
             "t": np.array(ee.translation).tolist(),
             "q": np.array(ee.quaternion).tolist(),
@@ -186,7 +200,8 @@ class FrankaWrapper:
             delta: If True, interpret target_ee_pose as relative to current pose.
                    If False, interpret as absolute pose.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
+        See also: 
+            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
 
@@ -226,7 +241,8 @@ class FrankaWrapper:
             target_joint_positions: List of target joint angles.
             asynchronous: If True, return immediately without waiting for motion to complete.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
+        See also: 
+            https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
         """
         joint_motion = JointMotion(target_joint_positions)
         self.robot.move(joint_motion, asynchronous=asynchronous)
@@ -239,7 +255,8 @@ class FrankaWrapper:
             waypoints: List of Cartesian poses/waypoints.
             delta: If True, interpret waypoints as relative motions.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
+        See also: 
+            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
         wp_motion = CartesianWaypointMotion([
@@ -258,7 +275,8 @@ class FrankaWrapper:
         Args:
             waypoints: List of joint configurations (each a list of angles).
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
+        See also: 
+            https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
         """
         wp_motion = JointWaypointMotion([
             JointWaypoint(list(pt))
@@ -278,14 +296,16 @@ class FrankaWrapper:
         # TODO: implement this
         pass
 
+@click.command()
+@click.option("--ip", default="192.168.1.33", help="Robot IP address")
+@click.option("--controller-type", default="joint_impedance", help="Controller type")
+@click.option("--port", default=4242, help="Port number")
+def main(ip, controller_type, port):
+    server = FrankaWrapper(ip, controller_type, franka_hand=False)
+    s = zerorpc.Server(server, heartbeat=None)
+    s.bind(f"tcp://0.0.0.0:{port}")
+    cprint(f"Franka Server listening on tcp://0.0.0.0:{port}", "green")
+    s.run()
 
 if __name__ == "__main__":
-    # TODO: parse arguments as needed
-    IP = "192.168.1.33"
-    CONTROLLER_TYPE = "joint_impedance"
-    PORT = 4242
-    server = FrankaWrapper(IP, CONTROLLER_TYPE, franka_hand=False)
-    s = zerorpc.Server(server, heartbeat=None)
-    s.bind(f"tcp://0.0.0.0:{PORT}")
-    cprint(f"Franka Server listening on tcp://0.0.0.0:{PORT}", "green")
-    s.run()
+    main()

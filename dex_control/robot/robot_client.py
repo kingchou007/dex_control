@@ -8,7 +8,15 @@ It is implemented using zerorpc, a lightweight RPC framework for Python.
 Please also refer to dex_control/robot/franka_wrapper.py for the server side implementation.
 Before using this client, please make sure the Franka Robot Control Server is running.
 
-See examples/ for usage examples.
+Usage:
+    # From any Python file:
+    from dex_control.robot.robot_client import FrankaRobotClient
+    
+    robot = FrankaRobotClient(server_addr="tcp://192.168.1.7:4242")
+    pose = robot.get_ee_pose()
+    robot.move_ee_pose([0.0, 0.0, 0.01], delta=True)  # Move down 1cm
+
+See examples/robot_example.py for more usage examples.
 """
 
 import time
@@ -32,29 +40,30 @@ class FrankaRobotClient:
         self.client.connect(server_addr)
         print(f"Connected to Franka RPC server at {server_addr}")
 
-    def get_joint_positions(self) -> List[float]:
+    def get_joint_positions(self) -> np.ndarray:
         """Get the current joint positions of the robot.
 
         Returns:
-            List of joint angles.
+            np.ndarray: Array of joint angles.
         """
-        return self.client.get_joint_positions()
+        return np.array(self.client.get_joint_positions())
 
-    def get_ee_pose(self) -> Dict[str, List[float]]:
+    def get_ee_pose(self) -> Dict[str, np.ndarray]:
         """Get the current end-effector pose.
 
         Returns:
-            Dictionary containing 't' (translation) and 'q' (quaternion).
+            Dictionary containing 't' (translation) and 'q' (quaternion) as numpy arrays.
         """
-        return self.client.get_ee_pose()
+        pose = self.client.get_ee_pose()
+        return {
+            "t": np.array(pose["t"]),
+            "q": np.array(pose["q"])
+        }
 
-    def get_state(self) -> Any:
-        """Get the full robot state.
-
-        Returns:
-            The robot state object (serialized).
-        """
-        return self.client.get_state()
+    # TODO: process the state can be send by RPC
+    def get_state(self) -> Dict[str, Any]:
+        """Get the full robot state. """
+        raise NotImplementedError("get_state is not implemented")
 
     def move_ee_pose(
         self,
@@ -123,8 +132,8 @@ class FrankaRobotClient:
 @click.command()
 @click.option("--ip", default="192.168.1.7", help="Robot NUC server IP address")
 def main(ip):
-    """Franka Robot Client CLI"""
+    """Franka Robot Client CLI Example"""
     robot = FrankaRobotClient(f"tcp://{ip}:4242")
-    
+    print(robot.get_ee_pose())
 if __name__ == "__main__":
     main()

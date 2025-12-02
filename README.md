@@ -24,17 +24,6 @@ conda activate dex-control
 bash scripts/install_all.sh  # (script coming soon)
 ```
 
-
-## Usage
-
-```python
-from dex_control.robot.client import NucRobotClient
-
-client = NucRobotClient(nuc_addr="tcp://:4242")
-state = client.get_state()
-client.reset_to_joints([0.0, -0.5, 0.0, -2.0, 0.0, 2.0, 0.8], duration=5.0)
-```
-
 Reset script: `python scripts/reset_robot.py`
 
 ## License
@@ -42,4 +31,4 @@ Reset script: `python scripts/reset_robot.py`
 MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
-This project is built using the official [libfranka](https://github.com/frankarobotics/libfranka) library from Franka Robotics.
+This project uses the official [libfranka](https://github.com/frankarobotics/libfranka) library from Franka Robotics, with [franky](https://github.com/TimSchneider42/franky) as the Python interface. It also builds on data frameworks such as [droid](https://github.com/droid-dataset/droid) and [eva](https://github.com/willjhliang/eva) from Upen, along with other internal and open-source libraries for perception, planning, and teleoperation.

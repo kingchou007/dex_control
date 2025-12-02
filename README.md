@@ -11,7 +11,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 1. Clone the repository and initialize submodules:
 ```bash
-git clone <repository-url>
+git clone https://github.com/Robot-Dexterity-Lab/dex-control
 cd dex-control
 git submodule update --init --recursive
 
@@ -22,6 +22,69 @@ conda activate dex-control
 2. (Recommended) Install all dependencies and setup in one step using the provided setup script:
 ```bash
 bash scripts/install_all.sh  # (script coming soon)
+```
+
+
+## Usage
+
+We recommend the following tmux setup:
+```
++-------------------------+-------------------------+
+|                         |                         |
+|      Server (NUC)       |     Runner (Laptop)     |
++-------------------------+                         |
+|    Scripts (Laptop)     |                         |
+|                         |                         |
++-------------------------+-------------------------+
+```
+
+### 1. Start Up (on NUC/Robot PC)
+1. On the NUC, run
+```bash
+conda activate dex-control
+python dex_control/robot/franka_wrapper.py --ip <ROBOT_IP> --controller-type joint_impedance
+```
+2. On the laptop, run
+```bash
+conda activate dex-control
+python basic_control/.py
+```
+
+### 2. Connect from Client (on your PC)
+You can find more examples in the `examples` folder.
+```python
+from dex_control.robot.robot_client import FrankaRobotClient
+
+# Initialize client with the NUC's IP address
+robot = FrankaRobotClient(server_addr="tcp://<NUC_IP>:4242")
+
+# Get robot state
+state = robot.get_ee_pose()
+print("Joints:", robot.get_joint_positions())
+
+# Move robot
+robot.move_ee_pose([0.1, 0.0, 0.0], delta=True)  # Move x 1cm up
+
+# Move end-effector to a target pose (translation + quaternion as a list)
+# Example: Move to absolute position [x, y, z, qx, qy, qz, qw]
+robot.move_ee_pose([0.55, 0.0, 0.4, 0.0, 0.0, 1.0, 0.0], delta=False)
+
+# Move end-effector by a relative translation (in meters)
+robot.move_ee_pose([0.0, 0.0, 0.1], delta=True)  # Move 10cm up
+
+# Move end-effector by a relative translation + orientation change (both relative)
+# [dx, dy, dz, dqx, dqy, dqz, dqw], delta=True
+relative_translation = [0.0, 0.10, 0.0]
+relative_quaternion = [0.0, 0.0, 0.0, 1.0]  # No rotation (relative), of course you can use abs control 
+robot.move_ee_pose(relative_translation + relative_quaternion, delta=True)
+```
+
+### CLI Client Usage
+
+You can also use the client script directly from the command line:
+
+```bash
+python dex_control/robot/robot_client.py --ip <NUC_IP>
 ```
 
 Reset script: `python scripts/reset_robot.py`

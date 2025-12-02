@@ -1,161 +1,134 @@
+"""
+High-level python wrapper for Franka robot control.
+
+Author: Jinzhou Li
+
+Provides a simplified interface for common robot operations:
+- Moving end-effector by translation/rotation (delta or absolute)
+- Moving joints to target positions 
+- Getting current robot state 
+- All control is non-blocking (optional) and asynchronous, so it's implemented in an event-driven manner.
+
+Reference: https://timschneider42.github.io/franky/index.html
+
+"""
+
 import time
-import asyncio
 import numpy as np
-from aiofranka.robot import RobotInterface
-from aiofranka import FrankaController
-from scipy.spatial.transform import Rotation as R
-from typing import Optional
 import zerorpc
+from termcolor import cprint
+from typing import Optional
+from scipy.spatial.transform import Rotation as R
+from termcolor import cprint
+from franky import (
+    Affine,
+    JointWaypointMotion,
+    JointWaypoint,
+    Robot,
+    CartesianWaypointMotion,
+    CartesianWaypoint,
+    ReferenceType,
+    RobotPose,
+    ElbowState,
+    CartesianMotion,
+    CartesianState,
+    Twist,
+    RelativeDynamicsFactor,
+    CartesianStopMotion,
+)
 
 
 class FrankaWrapper:
-    """
-    High-level wrapper for Franka robot control.
-    
-    Provides a simplified interface for common robot operations:
-    - Moving end-effector by translation/rotation (delta or absolute)
-    - Moving joints to target positions 
-    - Getting current robot state 
-    - All control is non-blocking and asynchronous, so it's implemented in an event-driven manner.
-    
-    This wrapper manages the underlying FrankaController and automatically
-    switches between control modes as needed.
-
-    # We temporarily use the aiofranka library for the controller, 
-    # but we will switch to the our own lab controller library in the future.
-    
-    Attributes:
-        robot (RobotInterface): Low-level robot interface
-        controller (FrankaController): High-level controller
-        ip (str): Robot IP address
-        started (bool): Whether controller is started
-    """
-    
-    def __init__(self, ip: str, controller_type: str = "osc"):
-        """
-        Initialize robot wrapper.
-        
-        Args:
-            ip (str): Robot IP address (e.g., "192.168.1.33")
-        """
+    def __init__(self, ip: str, controller_type: str = "joint_impedance"):
         self.ip = ip
-        self.robot = RobotInterface(ip)
-        self.controller = FrankaController(self.robot)
-        self.started = False
+        self.robot = Robot(ip)
+        self._setup_controller(controller_type)
+        cprint(f"FrankaWrapper initialized with controller type: {controller_type}", "green")
 
-        self.controller_type = controller_type
-        
-        # TODO: need to test this with the real robot.
-        # Default OSC gains for end-effector control
-        if self.controller_type == "osc":
-            self.controller.switch("osc")
-            self.controller.ee_kp = np.array([300, 300, 300, 1000, 1000, 1000])
-            self.controller.ee_kd = np.ones(6) * 10.0
-        # Joint-space impedance control
-        elif self.controller_type == "impedance":
-            self.controller.switch("impedance")
-            self.controller.kp = np.ones(7) * 80.0
-            self.controller.kd = np.ones(7) * 4.0
+    def _setup_controller(self, controller_type: str):
+        """Set up controller parameters based on the chosen controller type."""
+        if controller_type == "cartesian_impedance":
+            self.robot.set_cartesian_impedance([
+                1000.0, 1000.0, 1000.0,   # x, y, z stiffness
+                30.0, 30.0, 30.0          # roll, pitch, yaw stiffness
+            ])
+        elif controller_type == "joint_impedance":
+            self.robot.set_joint_impedance([100, 100, 100, 10, 10, 10, 10])
         else:
-            raise ValueError(f"Invalid controller type: {self.controller_type}")
+            raise ValueError(f"Invalid controller type: {controller_type}")
 
-        self.controller.set_freq(50)
+    def get_state(self):
+        """Retrieve current robot state and print key info, then return the state."""
+        state = self.robot.state
+        print("O_T_EE: ", state.O_T_EE)
+        print("Joints: ", state.q)
+        time.sleep(0.05)
+        return state
 
-        # start the controller (Test)
-        await self.controller.start()
+    def get_joint_positions(self) -> np.ndarray:
+        """
+        Get the current joint positions of the robot.
+        Returns:
+            np.ndarray: Array of joint angles [q1, q2, ..., q7].
+        """
+        return self.robot.state.q
 
-    
-    async def start(self):
+    def get_ee_pose(self):
         """
-        Start the robot controller.
-        
-        Must be called before using move_ee_pose() or move_joints().
-        Moves robot to home position after starting.
+        Returns the end-effector pose as given by the robot API.
+        Returns:
+            pose: e.g., O_T_EE matrix or representation from the state.
         """
-        await self.controller.start()
-        await self.controller.move()  # Move to home position
-        await asyncio.sleep(1.0)      # Wait for motion to complete
-        self.started = True
-    
-    async def stop(self):
-        """ Stop the robot controller."""
-        await self.controller.stop()
-        self.started = False
-    
-    async def move_ee_pose(
-        self, 
-        translation: np.ndarray, 
-        rotation: np.ndarray,
-        delta: bool = False
-    ):
-        """
-        Move end-effector by translation and rotation. """
+        return self.robot.state.O_T_EE
 
-        # Ensure inputs are numpy arrays
-        translation = np.array(translation)
-        rotation = np.array(rotation)
-        
-        # Convert rotation to rotation matrix if needed
-        if rotation.shape == (3, 3):
-            rot_matrix = rotation
-        elif rotation.shape == (4,):
-            # Quaternion [x, y, z, w]
-            rot_matrix = R.from_quat(rotation).as_matrix()
-        else:
-            raise ValueError(f"Invalid rotation shape: {rotation.shape}. Expected (3,3) or (4,)")
-        
-        # Get current end-effector pose
-        current_state = self.controller.robot.state
-        current_ee = current_state['ee'].copy()
-        
-        # Apply delta or absolute positioning
-        if delta:
-            # Relative: add translation, compose rotations
-            current_ee[:3, 3] += translation
-            current_ee[:3, :3] = rot_matrix @ current_ee[:3, :3]
-        else:
-            # Absolute: set directly
-            current_ee[:3, 3] = translation
-            current_ee[:3, :3] = rot_matrix
-        
-        await self.controller.set("ee_desired", current_ee)
-    
-    async def move_joints(
-        self, 
-        joint_positions: np.ndarray,
-        use_trajectory: bool = True,
-        kp: Optional[np.ndarray] = None,
-        kd: Optional[np.ndarray] = None,
-        freq: Optional[float] = None
-    ):
+    def move_ee_pose(self, target_ee_pose, asynchronous: bool = False, delta: bool = True):
+        """Move the end-effector to a target pose, as a delta or absolute pose."""
+        reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
+        cart_motion = CartesianMotion(target_ee_pose, reference_type=reference_type)
+        self.robot.move(cart_motion, asynchronous=asynchronous)
+
+    def move_joints(self, target_joint_positions, asynchronous: bool = False):
+        """Move joints to the given target positions."""
+        joint_motion = JointMotion(target_joint_positions)
+        self.robot.move(joint_motion, asynchronous=asynchronous)
+
+    def move_ee_waypoints(self, waypoints, delta: bool = True):
+        """Move the end-effector through a sequence of waypoints.
+        Args:
+            waypoints: List of 3D positions.
+            delta (bool): If True, interpret waypoints as relative motions.
         """
-        Move robot joints to target positions.
-        It's non-blocking and asynchronous, so it's implemented in an event-driven manner.
-        """
-     
-        joint_positions = np.array(joint_positions)
-        await self.controller.move(joint_positions.tolist())
-    
-    def get_state(self) -> dict:
-        """ Get current robot state. """
-        return self.controller.robot.state
+        reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
+        wp_motion = CartesianWaypointMotion([
+            CartesianWaypoint(RobotPose(Affine(list(pt)), ElbowState(0.0)), reference_type)
+            for pt in waypoints
+        ])
+        self.robot.move(wp_motion)
+
+    def move_joint_waypoints(self, waypoints):
+        """Move the robot's joints through a sequence of joint angle waypoints."""
+        wp_motion = JointWaypointMotion([
+            JointWaypoint(list(pt))
+            for pt in waypoints
+        ])
+        self.robot.move(wp_motion)
+
+    def move_ee_cartesian_velocity(self):
+        """Control EE using a specified Cartesian velocity (Not yet implemented)."""
+        pass  # TODO: implement this
+
+    def move_joint_cartesian_velocity(self):
+        """Control robot with joint or Cartesian velocity commands (Not yet implemented)."""
+        pass  # TODO: implement this
+
 
 if __name__ == "__main__":
-    # Start ZeroRPC server for remote control
+    # TODO: parse arguments as needed
     ip = "192.168.1.33"
-
-    # before start, we should check, what controller type should be used.
     controller_type = "osc"
+    port = 4242
     server = FrankaWrapper(ip, controller_type)
-    
-    # Start the robot controller
-    print("Starting robot controller...")
-    asyncio.run(server.start())
-    print("Robot controller started and moved to home position")
-    
-    # Start ZeroRPC server
     s = zerorpc.Server(server, heartbeat=None)
-    s.bind("tcp://0.0.0.0:4242")
-    print("FrankaServer listening on tcp://0.0.0.0:4242")
+    s.bind(f"tcp://0.0.0.0:{port}")
+    cprint(f"Franka Server listening on tcp://0.0.0.0:{port}", "green")
     s.run()
-

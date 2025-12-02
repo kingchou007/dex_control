@@ -30,7 +30,7 @@ import click
 class FrankaRobotClient:
     """Robot Client for controlling the Franka robot remotely."""
 
-    def __init__(self, server_addr: str = "tcp://192.168.1.7:4242"):
+    def __init__(self, server_addr: str = "tcp://192.168.1.7:4242", franka_hand: bool = False):
         """Initialize the FrankaRobotClient.
 
         Args:
@@ -38,6 +38,7 @@ class FrankaRobotClient:
         """
         self.client = zerorpc.Client()
         self.client.connect(server_addr)
+        self.franka_hand = franka_hand
         print(f"Connected to Franka RPC server at {server_addr}")
 
     def get_joint_positions(self) -> np.ndarray:

@@ -11,10 +11,12 @@ DEFAULT_JOINTS = [
     0.84809,   # Joint 7
 ]
 
-def reset_robot(joints=DEFAULT_JOINTS, duration=5.0):
-    robot = FrankaRobotClient()
+def reset_robot(joints=DEFAULT_JOINTS):
+    robot = FrankaRobotClient(server_addr="tcp://192.168.1.7:4242", franka_hand=True)
     print("Resetting robot...")
     robot.move_joints(joints, asynchronous=False)
+    if robot.franka_hand:
+        robot.release_object()
     print("Reset done.")
 
 if __name__ == "__main__":

@@ -77,7 +77,8 @@ python basic_control/.py
 ```
 
 ### 2. Connect from Client (on your PC)
-You can find more examples in the `examples` folder.
+You can find additional usage examples inside the `examples` directory, such as:
+
 ```python
 from dex_control.robot.robot_client import FrankaRobotClient
 
@@ -89,14 +90,14 @@ state = robot.get_ee_pose()
 print("Joints:", robot.get_joint_positions())
 
 # Move robot
-robot.move_ee_pose([0.1, 0.0, 0.0], delta=True)  # Move x 1cm up
+robot.move_ee_pose([0.1, 0.0, 0.0], delta=True)  # Move x -> 10 cm
 
 # Move end-effector to a target pose (translation + quaternion as a list)
 # Example: Move to absolute position [x, y, z, qx, qy, qz, qw]
 robot.move_ee_pose([0.55, 0.0, 0.4, 0.0, 0.0, 1.0, 0.0], delta=False)
 
 # Move end-effector by a relative translation (in meters)
-robot.move_ee_pose([0.0, 0.0, 0.1], delta=True)  # Move 10cm up
+robot.move_ee_pose([0.0, 0.0, 0.1], delta=True)  # Move y -> 10cm up
 
 # Move end-effector by a relative translation + orientation change (both relative)
 # [dx, dy, dz, dqx, dqy, dqz, dqw], delta=True
@@ -104,6 +105,21 @@ relative_translation = [0.0, 0.10, 0.0]
 relative_quaternion = [0.0, 0.0, 0.0, 1.0]  # No rotation (relative), of course you can use abs control 
 robot.move_ee_pose(relative_translation + relative_quaternion, delta=True)
 ```
+
+### Examples
+```bash
+python examples/0_basic_control.py
+```
+
+or run teleoperation with the SpaceMouse:
+
+```bash
+python examples/1_spacemouse_teleop.py --ip <ROBOT_IP>
+```
+
+Replace `<ROBOT_IP>` with your NUC or robot server's IP address as needed.
+
+
 
 ### CLI Client Usage
 

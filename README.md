@@ -42,11 +42,12 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
    > **Tip:** Use `--recurse-submodules` during cloning to automatically initialize submodules. Otherwise, after cloning, run `git submodule update --init --recursive`.
 
-   > **Note:** If you only need client functionality (not controlling the real robot from the NUC), you can skip the `bash scripts/install.sh` step and submodule initialization.
+   > **Note:** Before making any edits, make sure to run `sync_infra.sh` to synchronize code between your local machine and the NUC.
+
 
 2. (Recommended) Install all dependencies and setup in one step using the provided setup script:
 ```bash
-bash scripts/install_all.sh  # (script coming soon)
+bash scripts/install_all.sh  # (script and docker coming soon)
 ```
 
 

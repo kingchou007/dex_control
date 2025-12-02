@@ -46,6 +46,7 @@ class FrankaWrapper:
         ip: str,
         controller_type: str = "joint_impedance",
         franka_hand: bool = False,
+        teleop: bool = False,
     ):
         """Initialize the FrankaWrapper.
 
@@ -56,13 +57,25 @@ class FrankaWrapper:
         """
         self.ip = ip
         self.robot = Robot(ip)
+        self.teleop = teleop
         self.robot.recover_from_errors()
         self.franka_hand = franka_hand
         self._setup_franka_hand()
-        self._setup_controller(controller_type)
+        
+        self._setup_home_position()
+        self._setup_controller_parameters(controller_type)
 
 
-    def _setup_controller(self, controller_type: str):
+    def _setup_home_position(self):
+        """Set up home position (faster)."""
+        joint_motion = JointMotion([0.09162, -0.19826, -0.01990, -2.47323, -0.01307, 2.30397, 0.84809])
+        self.robot.relative_dynamics_factor = 0.2
+        self.robot.move(joint_motion, asynchronous=False)
+        time.sleep(0.1)
+        cprint("[FrankaWrapper] Set up home position (fast)", "green")
+
+    #TODO: config the controller parameters in a config file, include max acceleration, velocity, etc.
+    def _setup_controller_parameters(self, controller_type: str):
         """Set up controller parameters based on the chosen controller type.
 
         Args:
@@ -77,12 +90,17 @@ class FrankaWrapper:
                 30.0, 30.0, 30.0
             ])
         elif controller_type == "joint_impedance":
-            self.robot.set_joint_impedance([100, 100, 100, 10, 10, 10, 10])
+            self.robot.set_joint_impedance([50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0])
         else:
             raise ValueError(f"Invalid controller type: {controller_type}")
 
         # set relative dynamics factor to 0.1
-        self.robot.relative_dynamics_factor = 0.1
+        # If use for teleoperation, set to lower value to avoid jittering
+
+        if self.teleop:
+            self.robot.relative_dynamics_factor = 0.05
+        else:
+            self.robot.relative_dynamics_factor = 0.1
 
         # TOD0: add more controller parameters can be customized -> config file
         cprint(f"[FrankaWrapper] Set up controller type: {controller_type}", "green")
@@ -200,8 +218,7 @@ class FrankaWrapper:
             delta: If True, interpret target_ee_pose as relative to current pose.
                    If False, interpret as absolute pose.
 
-        See also: 
-            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
+        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
 
@@ -241,8 +258,7 @@ class FrankaWrapper:
             target_joint_positions: List of target joint angles.
             asynchronous: If True, return immediately without waiting for motion to complete.
 
-        See also: 
-            https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
+        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
         """
         joint_motion = JointMotion(target_joint_positions)
         self.robot.move(joint_motion, asynchronous=asynchronous)
@@ -255,8 +271,7 @@ class FrankaWrapper:
             waypoints: List of Cartesian poses/waypoints.
             delta: If True, interpret waypoints as relative motions.
 
-        See also: 
-            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
+        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
         wp_motion = CartesianWaypointMotion([
@@ -275,8 +290,7 @@ class FrankaWrapper:
         Args:
             waypoints: List of joint configurations (each a list of angles).
 
-        See also: 
-            https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
+        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
         """
         wp_motion = JointWaypointMotion([
             JointWaypoint(list(pt))
@@ -300,11 +314,13 @@ class FrankaWrapper:
 @click.option("--ip", default="192.168.1.33", help="Robot IP address")
 @click.option("--controller-type", default="joint_impedance", help="Controller type")
 @click.option("--port", default=4242, help="Port number")
-def main(ip, controller_type, port):
-    server = FrankaWrapper(ip, controller_type, franka_hand=False)
+@click.option("--teleop", is_flag=True, default=True, help="Enable teleoperation")
+def main(ip, controller_type, port, teleop):
+    server = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=True)
     s = zerorpc.Server(server, heartbeat=None)
     s.bind(f"tcp://0.0.0.0:{port}")
     cprint(f"Franka Server listening on tcp://0.0.0.0:{port}", "green")
+    cprint(f"Teleoperation: {teleop}", "green")
     s.run()
 
 if __name__ == "__main__":

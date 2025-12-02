@@ -23,7 +23,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
    On your **laptop or desktop** (local development machine):
    ```bash
-   git clone https://github.com/Robot-Dexterity-Lab/dex-control
+   git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
    cd dex-control
    conda create -n dex-control python=3.10
    conda activate dex-control
@@ -32,7 +32,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
    On the **NUC** (robot/server PC):
    ```bash
-   git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
+   bash sync_infra.sh   # (edit LOCAL_DIR and NUC_DIR inside sync_infra.sh as needed)
    cd dex-control
    conda create -n dex-control python=3.10
    conda activate dex-control

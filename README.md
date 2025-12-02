@@ -2,7 +2,7 @@
 
 Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
-**Author:** Jinzhou Li
+**Author:** [Jinzhou Li](https://kingchou007.github.io/)
 
 **Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab.
 
@@ -10,7 +10,8 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 - [x] Communication
 - [x] Basic control API
-- [ ] Integrate teleoperation and data collection workflows
+- [ ] Integrate teleoperation and data collection workflows  
+    - [ ] Add error handling, support for reconnecting, recalling, and rerunning processes
 - [ ] Add support for inference pipeline
 - [ ] Perform comprehensive real robot testing
 - [ ] Improve Docker setup documentation

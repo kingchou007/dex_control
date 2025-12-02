@@ -6,18 +6,43 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 **Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab.
 
+## TODO
+
+- [x] Communication
+- [x] Basic control API
+- [ ] Integrate teleoperation and data collection workflows
+- [ ] Add support for inference pipeline
+- [ ] Perform comprehensive real robot testing
+- [ ] Improve Docker setup documentation
+- [ ] Write a detailed installation guide from scratch
+
 
 ## Installation
 
-1. Clone the repository and initialize submodules:
-```bash
-git clone https://github.com/Robot-Dexterity-Lab/dex-control
-cd dex-control
-git submodule update --init --recursive
+1. **Clone the repository:**
 
-conda create -n dex-control python=3.10
-conda activate dex-control
-```
+   On your **laptop or desktop** (local development machine):
+   ```bash
+   git clone https://github.com/Robot-Dexterity-Lab/dex-control
+   cd dex-control
+   conda create -n dex-control python=3.10
+   conda activate dex-control
+   pip install .
+   ```
+
+   On the **NUC** (robot/server PC):
+   ```bash
+   git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
+   cd dex-control
+   conda create -n dex-control python=3.10
+   conda activate dex-control
+   pip install .
+   bash scripts/install.sh
+   ```
+
+   > **Tip:** Use `--recurse-submodules` during cloning to automatically initialize submodules. Otherwise, after cloning, run `git submodule update --init --recursive`.
+
+   > **Note:** If you only need client functionality (not controlling the real robot from the NUC), you can skip the `bash scripts/install.sh` step and submodule initialization.
 
 2. (Recommended) Install all dependencies and setup in one step using the provided setup script:
 ```bash

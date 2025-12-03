@@ -12,30 +12,14 @@ Reference: https://timschneider42.github.io/franky/index.html
 """
 
 import time
-import click
 from typing import List, Optional, Dict, Any, Union
 
-from franky import (
-    Affine,
-    CartesianMotion,
-    CartesianState,
-    CartesianStopMotion,
-    CartesianWaypoint,
-    CartesianWaypointMotion,
-    ElbowState,
-    JointMotion,
-    JointWaypoint,
-    JointWaypointMotion,
-    ReferenceType,
-    RelativeDynamicsFactor,
-    Robot,
-    RobotPose,
-    Twist,
-)
+import click
 import numpy as np
-from scipy.spatial.transform import Rotation as R
-from termcolor import cprint
+import spdlog
 import zerorpc
+from franky import *
+from scipy.spatial.transform import Rotation as R
 
 
 class FrankaWrapper:
@@ -54,17 +38,21 @@ class FrankaWrapper:
             ip: IP address of the robot.
             controller_type: Type of controller to use ("joint_impedance" or "cartesian_impedance").
             franka_hand: Whether the Franka hand is attached. Default is False, we use robotiq hand instead.
+            teleop: Whether this is for teleoperation (affects dynamics settings).
         """
+        # Initialize logger
+        self.log = spdlog.ConsoleLogger("FrankaWrapper")
+        self.log.set_level(spdlog.LogLevel.INFO)
+
+        self.log.info(f"Initializing FrankaWrapper with IP: {ip}")
         self.ip = ip
         self.robot = Robot(ip)
         self.teleop = teleop
         self.robot.recover_from_errors()
         self.franka_hand = franka_hand
         self._setup_franka_hand()
-        
         self._setup_home_position()
         self._setup_controller_parameters(controller_type)
-
 
     def _setup_home_position(self):
         """Set up home position (faster)."""
@@ -72,9 +60,8 @@ class FrankaWrapper:
         self.robot.relative_dynamics_factor = 0.2
         self.robot.move(joint_motion, asynchronous=False)
         time.sleep(0.1)
-        cprint("[FrankaWrapper] Set up home position (fast)", "green")
+        self.log.info("Set up home position (fast)")
 
-    #TODO: config the controller parameters in a config file, include max acceleration, velocity, etc.
     def _setup_controller_parameters(self, controller_type: str):
         """Set up controller parameters based on the chosen controller type.
 
@@ -83,7 +70,29 @@ class FrankaWrapper:
 
         Raises:
             ValueError: If an invalid controller type is provided.
+
+        Notes:
+            - Sets the robot's collision behavior thresholds (currently all set to 100).
+            - For "cartesian_impedance", sets cartesian impedance to [1000, 1000, 1000, 30, 30, 30].
+            - For "joint_impedance", sets soft joint impedance ([50.0, ...]).
+                * The stiffness is only available during the robot moving, not when stopped.
+                * Might require a long-term running loop to keep the stiffness active.
+                * Example settings for stiffer impedance:
+                    self.robot.set_joint_impedance([300.0, 300.0, 300.0, 300.0, 300.0, 300.0, 300.0])
+                    self.robot.set_joint_impedance([800.0, 800.0, 800.0, 800.0, 800.0, 800.0, 800.0])
+            - The relative dynamics factor is set to 0.1.
+                * Lower = slower but smoother; Higher = faster but more prone to errors.
+                * For safe teleoperation, a value of 0.05 is typical; tune as needed for your application.
         """
+        self.log.info("Set collision behavior")
+        self.robot.set_collision_behavior(
+            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+        )
+
+        self.log.info(f"Set Controller Type: {controller_type}")
         if controller_type == "cartesian_impedance":
             self.robot.set_cartesian_impedance([
                 1000.0, 1000.0, 1000.0,
@@ -94,17 +103,7 @@ class FrankaWrapper:
         else:
             raise ValueError(f"Invalid controller type: {controller_type}")
 
-        # set relative dynamics factor to 0.1
-        # If use for teleoperation, set to lower value to avoid jittering
-
-        if self.teleop:
-            self.robot.relative_dynamics_factor = 0.05
-        else:
-            self.robot.relative_dynamics_factor = 0.1
-
-        # TOD0: add more controller parameters can be customized -> config file
-        cprint(f"[FrankaWrapper] Set up controller type: {controller_type}", "green")
-
+        self.robot.relative_dynamics_factor = 0.1
 
     def _setup_franka_hand(self):
         """Set up franka hand parameters."""
@@ -113,13 +112,67 @@ class FrankaWrapper:
                 from franky import Gripper
                 self.gripper = Gripper(self.ip)
             except ImportError:
-                cprint("[FrankaWrapper] Warning: Gripper not found in franky.", "yellow")
-            
+                self.log.warn("Warning: Gripper not found in franky.")
+
             self.speed = 0.02  # [m/s]
             self.force = 20.0  # [N]
 
-        cprint("[FrankaWrapper] Set up franka hand", "green")
+        self.log.info("Set up franka hand")
 
+    def recover_from_errors(self):
+        """Recover from errors automatically.
+
+        Call this method when the robot enters reflex/error state to attempt
+        automatic recovery without manual intervention.
+
+        Returns:
+            bool: True if recovery succeeded, False otherwise.
+        """
+        try:
+            self.robot.recover_from_errors()
+            self.log.info("Successfully recovered from errors")
+            return True
+        except Exception as e:
+            self.log.error(f"Failed to recover from errors: {e}")
+            return False
+
+    def robust_execute_motion(self, motion, asynchronous: bool = False, max_retries: int = 3):
+        """Execute a motion command with automatic retry on ControlException.
+
+        Handles common errors like:
+        - Reflex errors (collision detection triggered)
+        - Communication errors or disconnections
+        - Motion aborted due to safety limits
+
+        The method automatically attempts error recovery between retries.
+
+        Args:
+            motion: The motion object (CartesianMotion, JointMotion, etc.)
+            asynchronous: If True, return immediately without waiting for motion to complete.
+            max_retries: Maximum number of retry attempts (default: 3).
+
+        Returns:
+            bool: True if motion succeeded, False if all retries failed.
+
+        See also:
+            https://timschneider42.github.io/franky/classfranky_1_1_control_exception.html
+        """
+        for attempt in range(max_retries):
+            try:
+                self.robot.move(motion, asynchronous=asynchronous)
+                return True
+            except ControlException as e:
+                # Common ControlException causes: reflex (collision), disconnection, safety violations
+                if attempt < max_retries - 1:
+                    self.log.warn(f"Attempt {attempt+1}/{max_retries}: ControlException (reflex/error): {e}")
+                    self.log.info("Attempting automatic recovery...")
+                else:
+                    self.log.error(f"Attempt {attempt+1}/{max_retries}: ControlException: {e}")
+                self.robot.recover_from_errors()
+
+        # If we get here, all attempts failed
+        self.log.error(f"Failed to move after {max_retries} attempts. Manual intervention may be required.")
+        return False
 
     def move_gripper(self, target_width: float, asynchronous: bool = False):
         """Move the gripper to the given target width.
@@ -129,42 +182,38 @@ class FrankaWrapper:
             asynchronous: If True, the gripper move is asynchronous.
         """
         if not self.franka_hand:
-             cprint("[FrankaWrapper] Franka hand not enabled.", "yellow")
-             return
+            self.log.warn("Franka hand not enabled.")
+            return
 
         if asynchronous:
             self.gripper.move_async(target_width, self.speed)
         else:
             self.gripper.move(target_width, self.speed)
 
-
     def grasp_object(self):
         """Grasp the object with unknown width."""
         if not self.franka_hand:
-             cprint("[FrankaWrapper] Franka hand not enabled.", "yellow")
-             return
+            self.log.warn("Franka hand not enabled.")
+            return
         self.gripper.grasp(0.0, self.speed, self.force, epsilon_outer=1.0)
-
 
     def release_object(self):
         """Release the object."""
         if not self.franka_hand:
-            cprint("[FrankaWrapper] Franka hand not enabled.", "yellow")
+            self.log.warn("Franka hand not enabled.")
             return
         self.gripper.open(self.speed)
 
-
-    def get_state(self):
+    def get_state(self) -> Dict[str, List[float]]:
         """Retrieve current robot state.
 
         Returns:
-            dict: Dictionary containing all available robot state information. No fixed format—use as needed.
-            
+            dict: Dictionary containing all available robot state information.
+
         See also:
             https://timschneider42.github.io/franky/structfranky_1_1_robot_state.html
         """
-
-        state = self.robot.state  
+        state = self.robot.state
         return {
             "q": np.array(state.q).tolist(),
             "q_d": np.array(state.q_d).tolist(),
@@ -177,17 +226,14 @@ class FrankaWrapper:
             "O_T_EE": np.array(state.O_T_EE).tolist(),
         }
 
-
-    def get_joint_positions(self):
+    def get_joint_positions(self) -> List[float]:
         """Get the current joint positions of the robot.
 
         Returns:
-            List[float]: Array of joint angles [q1, q2, ..., q7].
+            List[float]: List of joint angles [q1, q2, ..., q7].
                         Converted to list for RPC serialization.
         """
-        # Convert to list for RPC serialization
         return np.array(self.robot.state.q).tolist()
-
 
     def get_ee_pose(self) -> Dict[str, List[float]]:
         """Get the end-effector translation and quaternion.
@@ -203,67 +249,65 @@ class FrankaWrapper:
             "q": np.array(ee.quaternion).tolist(),
         }
 
-
     def move_ee_pose(
         self,
-        target_ee_pose: Any,
+        target_ee_pose: Union[List[float], Affine],
         asynchronous: bool = True,
         delta: bool = True
-    ):
+    ) -> bool:
         """Move the end-effector to a target pose.
 
         Args:
-            target_ee_pose: The target pose (format depends on franky.CartesianMotion).
+            target_ee_pose: Target pose as [x, y, z], [qx, qy, qz, qw], or [x, y, z, qx, qy, qz, qw].
             asynchronous: If True, return immediately without waiting for motion to complete.
             delta: If True, interpret target_ee_pose as relative to current pose.
                    If False, interpret as absolute pose.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
+        Returns:
+            bool: True if motion succeeded, False if all retries failed.
+
+        See also:
+            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
 
-        pose_len = len(target_ee_pose)
-        if pose_len == 3:
-            # Only translation: [x, y, z]
-            translation = list(target_ee_pose)
-            target_ee_pose = Affine(translation)
-        elif pose_len == 4:
-            # Only rotation: [qx, qy, qz, qw], zero translation
-            quaternion = list(target_ee_pose)
-            target_ee_pose = Affine([0.0, 0.0, 0.0], quaternion)
-        elif pose_len == 7:
-            # Full pose: [x, y, z, qx, qy, qz, qw]
-            translation = list(target_ee_pose[:3])
-            quaternion = list(target_ee_pose[3:])
-            target_ee_pose = Affine(translation, quaternion)
-        else:
-            raise ValueError(
-                f"Invalid target_ee_pose length: {pose_len}. "
-                "Expected 3, 4, or 7."
-            )
+        if isinstance(target_ee_pose, list):
+            pose_len = len(target_ee_pose)
+            if pose_len == 3:
+                target_ee_pose = Affine(target_ee_pose)
+            elif pose_len == 4:
+                target_ee_pose = Affine([0.0, 0.0, 0.0], target_ee_pose)
+            elif pose_len == 7:
+                target_ee_pose = Affine(target_ee_pose[:3], target_ee_pose[3:])
+            else:
+                raise ValueError(
+                    f"Invalid target_ee_pose length: {pose_len}. "
+                    "Expected 3, 4, or 7."
+                )
 
-        target_motion=CartesianMotion(target_ee_pose, reference_type=reference_type)
-
-        self.robot.move(target_motion, asynchronous=asynchronous)
-
+        target_motion = CartesianMotion(target_ee_pose, reference_type=reference_type)
+        return self.robust_execute_motion(target_motion, asynchronous=asynchronous)
 
     def move_joints(
         self,
         target_joint_positions: List[float],
         asynchronous: bool = False
-    ):
+    ) -> bool:
         """Move joints to the given target positions.
 
         Args:
             target_joint_positions: List of target joint angles.
             asynchronous: If True, return immediately without waiting for motion to complete.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
+        Returns:
+            bool: True if motion succeeded, False if all retries failed.
+
+        See also:
+            https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
         """
         joint_motion = JointMotion(target_joint_positions)
-        self.robot.move(joint_motion, asynchronous=asynchronous)
+        return self.robust_execute_motion(joint_motion, asynchronous=asynchronous)
 
-    # TODO: Test on real robot
     def move_ee_waypoints(self, waypoints: List[Any], delta: bool = True):
         """Move the end-effector through a sequence of waypoints.
 
@@ -271,44 +315,30 @@ class FrankaWrapper:
             waypoints: List of Cartesian poses/waypoints.
             delta: If True, interpret waypoints as relative motions.
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
+        See also:
+            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
         """
-        reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
-        wp_motion = CartesianWaypointMotion([
-            CartesianWaypoint(
-                RobotPose(Affine(list(pt)), ElbowState(0.0)), 
-                reference_type
-            )
-            for pt in waypoints
-        ])
-        self.robot.move(wp_motion)
+        raise NotImplementedError("Not tested on real robot")
 
-    # TODO: Test on real robot
     def move_joint_waypoints(self, waypoints: List[List[float]]):
         """Move the robot's joints through a sequence of joint angle waypoints.
 
         Args:
             waypoints: List of joint configurations (each a list of angles).
 
-        See also: https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
+        See also:
+            https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
         """
-        wp_motion = JointWaypointMotion([
-            JointWaypoint(list(pt))
-            for pt in waypoints
-        ])
-        self.robot.move(wp_motion)
-
+        raise NotImplementedError("Not tested on real robot")
 
     def move_ee_cartesian_velocity(self):
         """Control EE using a specified Cartesian velocity (Not yet implemented)."""
-        # TODO: implement this
-        pass
-
+        raise NotImplementedError("Not yet implemented")
 
     def move_joint_cartesian_velocity(self):
         """Control robot with joint or Cartesian velocity commands (Not yet implemented)."""
-        # TODO: implement this
-        pass
+        raise NotImplementedError("Not yet implemented")
+
 
 @click.command()
 @click.option("--ip", default="192.168.1.33", help="Robot IP address")
@@ -316,12 +346,14 @@ class FrankaWrapper:
 @click.option("--port", default=4242, help="Port number")
 @click.option("--teleop", is_flag=True, default=True, help="Enable teleoperation")
 def main(ip, controller_type, port, teleop):
-    server = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=True)
+    """Start Franka RPC server."""
+    server = FrankaWrapper(ip, controller_type, franka_hand=False, teleop=teleop)
     s = zerorpc.Server(server, heartbeat=None)
     s.bind(f"tcp://0.0.0.0:{port}")
-    cprint(f"Franka Server listening on tcp://0.0.0.0:{port}", "green")
-    cprint(f"Teleoperation: {teleop}", "green")
+    server.log.info(f"Franka Server listening on tcp://0.0.0.0:{port}")
+    server.log.info(f"Teleoperation: {teleop}")
     s.run()
+
 
 if __name__ == "__main__":
     main()

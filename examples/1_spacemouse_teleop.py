@@ -24,7 +24,7 @@ Examples:
     python examples/1_spacemouse_teleop.py
 
     # Connect to different robot IP
-    python examples/1_spacemouse_teleop.py --ip 192.168.1.10
+    python examples/1_spacemouse_teleop.py --ip 192.168.1.7
 
 Reference: https://github.com/UT-Austin-RPL/deoxys_control/blob/main/deoxys/deoxys/utils/io_devices/spacemouse.py
 
@@ -209,10 +209,10 @@ def main(ip, port, vendor_id, product_id, translation_scale, control_rate):
                 try:
                     if gripper_state:
                         robot.release_object()
-                        cprint("→ Released gripper", "green")
+                        cprint("Released gripper", "green")
                     else:
                         robot.grasp_object()
-                        cprint("→ Grasping object", "green")
+                        cprint("Grasping object", "green")
                 except Exception as e:
                     cprint(f"Gripper error: {e}", "red")
             
@@ -247,7 +247,7 @@ def main(ip, port, vendor_id, product_id, translation_scale, control_rate):
                     if "Reflex" in error_msg or "aborted" in error_msg:
                         error_count += 1
                         if error_count == 1:
-                            cprint("\n⚠ Robot error - pausing...", "yellow")
+                            cprint("\nRobot error - pausing...", "yellow")
                         skip_commands = 25
                         time.sleep(1.0)
                     else:

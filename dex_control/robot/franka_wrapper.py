@@ -103,7 +103,7 @@ class FrankaWrapper:
         else:
             raise ValueError(f"Invalid controller type: {controller_type}")
 
-        self.robot.relative_dynamics_factor = 0.1
+        self.robot.relative_dynamics_factor = 0.05
 
     def _setup_franka_hand(self):
         """Set up franka hand parameters."""

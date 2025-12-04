@@ -135,5 +135,9 @@ python dex_control/robot/robot_client.py --ip <NUC_IP>
 
 Reset script: `python scripts/reset_robot.py`
 
+## Limitation
+We currently only support joint and Cartesian position control. Because we use the [Python interface](https://github.com/TimSchneider42/franky), the control rate is usually below 100 Hz. I am now working on a new version that moves all computation to the C++ side with more robust communication, while Python only provides the API layer (a lite-[Polymetis](https://github.com/facebookresearch/polymetis) style design). This new version will also support [hybrid force control](https://github.com/yifan-hou/force_control).
+
+
 ## Acknowledgments
 This project uses the official [libfranka](https://github.com/frankarobotics/libfranka) library from Franka Robotics, with [franky](https://github.com/TimSchneider42/franky) as the Python interface. It also builds on data frameworks such as [droid](https://github.com/droid-dataset/droid) and [eva](https://github.com/willjhliang/eva) from Upen, along with other internal and open-source libraries for perception, planning, and teleoperation.

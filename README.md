@@ -6,6 +6,12 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 **Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab.
 
+
+## Demo
+
+![Demo](assets/demo.gif)
+
+
 ## TODO
 
 - [x] Communication

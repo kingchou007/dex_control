@@ -117,7 +117,7 @@ class FrankaWrapper:
             self.speed = 0.02  # [m/s]
             self.force = 20.0  # [N]
 
-        self.log.info("Set up franka hand")
+        self.log.info(f"Set up franka hand: {self.franka_hand}")
 
     def recover_from_errors(self):
         """Recover from errors automatically.
@@ -249,6 +249,23 @@ class FrankaWrapper:
             "q": np.array(ee.quaternion).tolist(),
         }
 
+    def get_torques(self) -> dict:
+        """Get the current torques of the robot.
+        Returns:
+            Dictionary containing 'tau_J' (joint torques)
+        """
+        return self.robot.state.tau_J
+
+    def get_external_torques(self) -> List[float]:
+        """Get the external torques on each joint.
+
+        Returns:
+            List[float]: List of 7 external torques (one per joint) in Nm.
+                        Converted to list for RPC serialization.
+        """
+        # Note: tau_ext_hat_filtered is a property (numpy array), not a method
+        return self.robot.state.tau_ext_hat_filtered()
+
     def move_ee_pose(
         self,
         target_ee_pose: Union[List[float], Affine],
@@ -347,7 +364,7 @@ class FrankaWrapper:
 @click.option("--teleop", is_flag=True, default=True, help="Enable teleoperation")
 def main(ip, controller_type, port, teleop):
     """Start Franka RPC server."""
-    server = FrankaWrapper(ip, controller_type, franka_hand=False, teleop=teleop)
+    server = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=teleop)
     s = zerorpc.Server(server, heartbeat=None)
     s.bind(f"tcp://0.0.0.0:{port}")
     server.log.info(f"Franka Server listening on tcp://0.0.0.0:{port}")

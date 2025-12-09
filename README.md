@@ -99,6 +99,7 @@ robot.move_ee_pose([0.55, 0.0, 0.4, 0.0, 0.0, 1.0, 0.0], delta=False)
 
 # Move end-effector by a relative translation (in meters)
 # Move z -> 10 cm down (if delta=True, negative z direction moves up)
+# In absolute cmd, +z will move up, -z will move down.
 robot.move_ee_pose([0.0, 0.0, 0.1], delta=True) 
 
 # Move end-effector by a relative translation + orientation change (both relative)

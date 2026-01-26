@@ -174,35 +174,120 @@ class FrankaWrapper:
         self.log.error(f"Failed to move after {max_retries} attempts. Manual intervention may be required.")
         return False
 
-    def move_gripper(self, target_width: float, asynchronous: bool = False):
-        """Move the gripper to the given target width.
 
+    # ---------------------------------------------------------
+    # Gripper Implementation 
+    # C++ Documentation: https://timschneider42.github.io/franky/classfranky_1_1_gripper.html#ad496a52d3a7a01926c8fd6e679901a89
+    # ---------------------------------------------------------
+    def move_gripper(self, target_width: float, speed: float = None, asynchronous: bool = False):
+        """Move the gripper to the given target width.
+        
         Args:
-            target_width: Target width of the gripper [m].
-            asynchronous: If True, the gripper move is asynchronous.
+            target_width: Target width [m].
+            speed: Speed [m/s]. If None, use default self.speed.
+            asynchronous: If True, returns immediately.
         """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
+            return False
+
+        cmd_speed = speed if speed is not None else self.speed
 
         if asynchronous:
-            self.gripper.move_async(target_width, self.speed)
+            self.gripper.move_async(target_width, cmd_speed)
+            return True
         else:
-            self.gripper.move(target_width, self.speed)
+            return self.gripper.move(target_width, cmd_speed)
 
-    def grasp_object(self):
-        """Grasp the object with unknown width."""
+    def grasp_object(self, width: float = 0.0, speed: float = None, force: float = None, 
+                     epsilon_inner: float = 0.005, epsilon_outer: float = 0.005, 
+                     asynchronous: bool = False):
+        """Grasp object with specific parameters.
+        
+        Matches the flexible API defined in the Client.
+        """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
-        self.gripper.grasp(0.0, self.speed, self.force, epsilon_outer=1.0)
+            return False
 
-    def release_object(self):
-        """Release the object."""
+        cmd_speed = speed if speed is not None else self.speed
+        cmd_force = force if force is not None else self.force
+
+        if asynchronous:
+            self.gripper.grasp_async(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
+            return True
+        else:
+            return self.gripper.grasp(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
+
+    def open_gripper(self, speed: float = None, asynchronous: bool = False):
+        """Release object / Open gripper fully.
+        
+        Renamed from release_object to match Client API 'open_gripper' 
+        (or you can keep release_object and map it in RPC).
+        """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
-        self.gripper.open(self.speed)
+            return False
+
+        cmd_speed = speed if speed is not None else self.speed
+
+        if asynchronous:
+            self.gripper.open_async(cmd_speed)
+            return True
+        else:
+            self.gripper.open(cmd_speed)
+            return True
+
+    def stop_gripper(self, asynchronous: bool = False):
+        """Stop the gripper motion immediately."""
+        if not self.franka_hand:
+            return False
+            
+        if asynchronous:
+            self.gripper.stop_async()
+            return True
+        else:
+            self.gripper.stop()
+            return True
+
+    def homing_gripper(self, asynchronous: bool = False):
+        """Calibrate the gripper."""
+        if not self.franka_hand:
+            return False
+
+        if asynchronous:
+            self.gripper.homing_async()
+            return True
+        else:
+            self.gripper.homing()
+            return True
+
+    # ------------------------------------------------------------------
+    # Gripper State Methods
+    # ------------------------------------------------------------------
+    def get_gripper_width(self) -> float:
+        """Get the current width of the gripper."""
+        if not self.franka_hand:
+            return 0.0
+
+        state = self.gripper.read_once() 
+        return state.width
+
+    def get_gripper_max_width(self) -> float:
+        """Get the maximum width of the gripper."""
+        if not self.franka_hand:
+            return 0.0
+
+        state = self.gripper.read_once()
+        return state.max_width
+
+    def is_gripper_grasped(self) -> bool:
+        """Check if an object is currently grasped."""
+        if not self.franka_hand:
+            return False
+
+        state = self.gripper.read_once()
+        return state.is_grasped
 
     def get_state(self) -> Dict[str, List[float]]:
         """Retrieve current robot state.

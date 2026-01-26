@@ -4,7 +4,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 **Author:** [Jinzhou Li](https://kingchou007.github.io/)
 
-**Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab.
+**Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab. This is the franky version (it's very easy to install, so we do not provide Docker), which you can use for quick testing and simple control. If you need advanced APIs, please use the [ROS2](https://github.com/Robot-Dexterity-Lab/dex-control/tree/ros2) branch (under development).
 
 
 ![Demo](assets/example.gif)
@@ -14,11 +14,10 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 - [x] Communication
 - [x] Basic control API
-- [ ] Integrate teleoperation and data collection workflows  
-    - [ ] Add error handling, support for reconnecting, recalling, and rerunning processes
-- [ ] Add support for inference pipeline
+- [x] Integrate teleoperation and data collection workflows  
+    - [x] Add error handling, support for reconnecting, recalling, and rerunning processes
+- [x] Add support for inference pipeline
 - [ ] Perform comprehensive real robot testing
-- [ ] Improve Docker setup documentation
 - [ ] Write a detailed installation guide from scratch
 
 ## Installation
@@ -51,7 +50,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 2. (Recommended) Install all dependencies and setup in one step using the provided setup script:
 ```bash
-bash scripts/install_all.sh  # (script and docker coming soon)
+bash scripts/install_all.sh 
 ```
 
 

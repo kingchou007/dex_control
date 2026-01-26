@@ -194,28 +194,90 @@ class FrankaRobotClient:
         """
         return self.client.move_joint_waypoints(waypoints)
 
+    # ------------------------------------------------------------------
+    # Gripper State (New)
+    # ------------------------------------------------------------------
+
     @robust_call()
-    def move_gripper(self, target_width: float, asynchronous: bool = False) -> None:
+    def get_gripper_width(self) -> float:
+        """Get current gripper width in meters."""
+        return float(self.client.get_gripper_width())
+
+    @robust_call()
+    def get_gripper_max_width(self) -> float:
+        """Get maximum gripper width in meters."""
+        return float(self.client.get_gripper_max_width())
+
+    @robust_call()
+    def is_gripper_grasped(self) -> bool:
+        """Check if gripper is currently holding an object."""
+        return bool(self.client.is_gripper_grasped())
+
+    # ------------------------------------------------------------------
+    # Gripper Control (Updated)
+    # ------------------------------------------------------------------
+    @robust_call()
+    def move_gripper(self, target_width: float, speed: float = 0.1, asynchronous: bool = False) -> bool:
         """Move gripper to specific width.
 
         Args:
-            target_width: Target gripper width in meters (0.0 = closed, ~0.08 = open).
-            asynchronous: If True, return immediately without waiting.
+            target_width: Target width in meters.
+            speed: Speed in m/s (default: 0.1).
+            asynchronous: If True, return immediately without waiting for completion.
         """
-        return self.client.move_gripper(target_width, asynchronous)
+        return self.client.move_gripper(target_width, speed, asynchronous)
 
     @robust_call()
-    def grasp_object(self) -> None:
-        """Grasp an object with automatic force control.
-        
-        The gripper will close until it detects contact and apply appropriate force.
+    def open_gripper(self, speed: float = 0.1, asynchronous: bool = False) -> bool:
+        """Fully open the gripper.
+
+        Args:
+            speed: Speed in m/s.
+            asynchronous: If True, return immediately.
         """
-        return self.client.grasp_object()
+        return self.client.open_gripper(speed, asynchronous)
+    
+    def release_object(self) -> bool:
+        """Alias for open_gripper (for backward compatibility)."""
+        return self.open_gripper()
 
     @robust_call()
-    def release_object(self) -> None:
-        """Release the grasped object by opening the gripper."""
-        return self.client.release_object()
+    def grasp_object(
+        self, 
+        width: float = 0.0, 
+        speed: float = 0.1, 
+        force: float = 60.0, 
+        epsilon_inner: float = 0.005, 
+        epsilon_outer: float = 0.005,
+        asynchronous: bool = False
+    ) -> bool:
+        """Grasp an object.
+
+        Args:
+            width: Expected object width (m). If 0, attempts to grasp at closed position.
+            speed: Closing speed (m/s).
+            force: Grasping force (N).
+            epsilon_inner: Tolerance for object being smaller than expected.
+            epsilon_outer: Tolerance for object being larger than expected.
+            asynchronous: If True, return immediately.
+        """
+        return self.client.grasp_object(width, speed, force, epsilon_inner, epsilon_outer, asynchronous)
+
+    @robust_call()
+    def stop_gripper(self, asynchronous: bool = False) -> bool:
+        """Immediately stop gripper motion."""
+        return self.client.stop_gripper(asynchronous)
+
+    @robust_call()
+    def homing_gripper(self, asynchronous: bool = False) -> bool:
+        """Calibrate gripper (Homing). usually done once after startup."""
+        return self.client.homing_gripper(asynchronous)
+
+    def close(self):
+        """Close the RPC connection."""
+        if self.client:
+            self.client.close()
+
 
 @click.command()
 @click.option("--ip", default="192.168.1.7", help="Robot server IP address")

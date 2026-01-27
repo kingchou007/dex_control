@@ -441,6 +441,65 @@ class FrankaWrapper:
         """Control robot with joint or Cartesian velocity commands (Not yet implemented)."""
         raise NotImplementedError("Not yet implemented")
 
+    def set_joint_impedance(self, impedance: List[float]) -> bool:
+        """Set joint impedance values.
+
+        Args:
+            impedance: List of 7 impedance values (one per joint).
+                      Lower values = more compliant/backdrivable.
+                      Set all to 0 for pure gravity compensation.
+
+        Returns:
+            bool: True if successful.
+        """
+        self.robot.set_joint_impedance(impedance)
+        self.log.info(f"Set joint impedance to {impedance}")
+        return True
+
+    def start_gravity_compensation(self, duration: float = 3600.0) -> bool:
+        """Start gravity compensation mode for kinesthetic teaching.
+
+        Uses JointVelocityMotion with zero velocities and zero impedance
+        to allow manual manipulation of the robot while maintaining pose.
+
+        Args:
+            duration: Duration in seconds (default: 1 hour).
+
+        Returns:
+            bool: True if motion started successfully.
+        """
+        # Set zero impedance for full compliance
+        self.robot.set_joint_impedance([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.log.info("Set joint impedance to zero for gravity compensation")
+
+        # Create zero velocity motion with long duration
+        zero_velocities = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        velocity_motion = JointVelocityMotion(zero_velocities, duration)
+
+        self.log.info(f"Starting gravity compensation mode for {duration}s")
+        self.log.info("Robot is now in kinesthetic teaching mode - you can manually guide it")
+
+        try:
+            self.robot.move(velocity_motion, asynchronous=True)
+            return True
+        except ControlException as e:
+            self.log.error(f"Failed to start gravity compensation: {e}")
+            return False
+
+    def stop_motion(self) -> bool:
+        """Stop any ongoing motion.
+
+        Returns:
+            bool: True if successful.
+        """
+        try:
+            self.robot.stop()
+            self.log.info("Motion stopped")
+            return True
+        except Exception as e:
+            self.log.error(f"Failed to stop motion: {e}")
+            return False
+
 
 @click.command()
 @click.option("--ip", default="192.168.1.33", help="Robot IP address")

@@ -1,30 +1,10 @@
 """Pose Tracker Teleoperation for Franka robot via ROS2 (TF Version)
 
-Subscribe to /tf topic (specifically for 'ufi_body' frame) 
+Subscribe to /tf topic (specifically for 'vive_tracker' frame) 
 and teleoperate the Franka robot.
 
 Usage:
     python examples/2_tracker_teleop.py [OPTIONS]
-
-Options:
-    --ip TEXT                 Robot server IP address [default: 192.168.1.7]
-    --port INTEGER            Robot server port [default: 4242]
-    --control-rate INTEGER    Control rate in Hz [default: 50]
-    --translation-scale FLOAT Scale factor for translation [default: 1.0]
-    --target-frame TEXT       Target TF frame ID to track [default: ufi_body]
-    --help                    Show this message and exit
-
-Controls:
-    - Move tracker (ufi_body): Control robot end-effector pose
-    - Ctrl+C: Exit
-
-ROS2 Topics:
-    Subscribed:
-        - /tf (tf2_msgs/TFMessage): Looks for transform to 'ufi_body'
-
-    Published:
-        - robot/ee_pose (geometry_msgs/PoseStamped): Current robot end-effector pose
-        - robot/joint_states (sensor_msgs/JointState): Current robot joint positions
 """
 
 import threading
@@ -47,15 +27,15 @@ from dex_control.robot.robot_client import FrankaRobotClient
 
 
 # Default CONFIG
-DEFAULT_IP = "192.168.1.7"
+DEFAULT_IP = "192.168.1.6"
 DEFAULT_PORT = 4242
 CONTROL_RATE_HZ = 50
 TRANSLATION_SCALE = 1.0
-DEFAULT_TARGET_FRAME = "ufi_body"  # Default frame from your log
+DEFAULT_TARGET_FRAME = "vive_tracker"  # Default frame from your log
 
 # Safety Limits
-MAX_DELTA_TRANSLATION = 0.05  # Maximum position delta per step (m)
-MAX_DELTA_ROTATION = 0.1      # Maximum rotation delta per step (rad)
+MAX_DELTA_TRANSLATION = 0.5  # Maximum position delta per step (m)
+MAX_DELTA_ROTATION = 0.5      # Maximum rotation delta per step (rad)
 
 
 def clamp_vector(vec: np.ndarray, max_val: float) -> np.ndarray:
@@ -63,28 +43,37 @@ def clamp_vector(vec: np.ndarray, max_val: float) -> np.ndarray:
     return np.clip(vec, -max_val, max_val)
 
 
-def swap_y_z_axis(T: np.ndarray) -> np.ndarray:
-    """Swap Y and Z axes in a 4x4 transformation matrix."""
-    T_new = T.copy()
-    # Swap rotation rows (Y and Z)
-    T_new[1, :], T_new[2, :] = T[2, :].copy(), T[1, :].copy()
-    # Swap rotation columns (Y and Z)
-    T_new[:, 1], T_new[:, 2] = T_new[:, 2].copy(), T_new[:, 1].copy()
-    return T_new
+# =========================================================================
+# ViveSignalProcessor: Please modify this based on init tracker pose
+# =========================================================================
+class ViveSignalProcessor:
+    def __init__(self):
+        self.init_pos = None
+        self.init_rot_inv = None
+        self._C = np.array([[1,  0,  0],
+                           [0,  0, 1],
+                           [0, -1,  0]], dtype=float)
 
+    def process(self, pos, quat_xyzw):
+        """
+        Raw: pos=[x,y,z], quat=[x,y,z,w]
+        Output pos=[x,y,z], quat=[w,x,y,z]
+        """
+        pos_transformed = self._C @ np.array(pos)
+        rot_mat = R.from_quat(quat_xyzw).as_matrix()
+        rot_transformed = self._C @ rot_mat @ self._C.T
+        curr_rot = R.from_matrix(rot_transformed)
 
-def rfu_to_flu(T_rfu: np.ndarray) -> np.ndarray:
-    """Convert transformation matrix from RFU (Right, Front, Up) to FLU (Front, Left, Up)."""
-    C = np.array([
-        [0,  1, 0, 0],
-        [-1, 0, 0, 0],
-        [0,  0, 1, 0],
-        [0,  0, 0, 1]
-    ])
-    C_inv = C.T
-    T_flu = C @ T_rfu @ C_inv
-    return T_flu
+        if self.init_pos is None:
+            self.init_pos = pos_transformed.copy()
+            self.init_rot_inv = curr_rot.inv()
+            return np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
 
+        rel_pos = pos_transformed - self.init_pos
+        rel_rot = self.init_rot_inv * curr_rot
+        qx, qy, qz, qw = rel_rot.as_quat()
+        
+        return rel_pos, np.array([qw, qx, qy, qz])
 
 class TrackerTeleopNode(Node):
     """ROS2 node for pose tracker teleoperation via TF."""
@@ -93,7 +82,7 @@ class TrackerTeleopNode(Node):
         self,
         robot: FrankaRobotClient,
         trans_scale: float = 1.0,
-        target_frame: str = "ufi_body"
+        target_frame: str = "vive_tracker"
     ):
         super().__init__("tracker_teleop")
 
@@ -104,6 +93,7 @@ class TrackerTeleopNode(Node):
         self.trans_scale = trans_scale
         self.target_frame = target_frame
         self.lock = threading.Lock()
+        self.signal_processor = ViveSignalProcessor()
 
         # Get initial arm pose: [x, y, z, qw, qx, qy, qz] (wxyz quaternion)
         self.init_arm_ee_pose = self._get_tcp_position()
@@ -188,38 +178,20 @@ class TrackerTeleopNode(Node):
             return
 
         with self.lock:
-            # Extract position
-            pos = np.array([
+            raw_pos = [
                 target_transform.translation.x,
                 target_transform.translation.y,
                 target_transform.translation.z
-            ])
-            
-            # Extract rotation (TF uses xyzw, convert to wxyz for transforms3d)
-            quat_wxyz = [
-                target_transform.rotation.w,
+            ]
+            raw_quat_xyzw = [
                 target_transform.rotation.x,
                 target_transform.rotation.y,
-                target_transform.rotation.z
+                target_transform.rotation.z,
+                target_transform.rotation.w
             ]
             
-            rot = quat2mat(quat_wxyz)
-            transmat = np.zeros((4, 4))
-            transmat[:3, :3] = rot
-            transmat[:3, 3] = pos
-            transmat[3, 3] = 1.0
-            
-            # Apply coordinate transformations
-            # NOTE: Verify if ufi_body frame still needs Y/Z swap compared to robot frame
-            transmat = swap_y_z_axis(transmat)
-            transmat = rfu_to_flu(transmat)
-            
-            rot = transmat[:3, :3]
-            pos = transmat[:3, 3]
-            rot_quat_wxyz = mat2quat(rot)  # Returns wxyz
-            
-            # Store as [x, y, z, qw, qx, qy, qz]
-            self.tracker_pose = np.concatenate([pos, rot_quat_wxyz], axis=0)
+            rel_pos, rel_quat_wxyz = self.signal_processor.process(raw_pos, raw_quat_xyzw)
+            self.tracker_pose = np.concatenate([rel_pos, rel_quat_wxyz], axis=0)
             self.tracker_pose_updated = True
 
     def _retarget_base(self) -> np.ndarray:
@@ -227,7 +199,6 @@ class TrackerTeleopNode(Node):
         with self.lock:
             tracker_pose = self.tracker_pose.copy()
         
-        # Calculate desired pose
         desired_pose = self.init_arm_ee_pose.copy()
         desired_pose[:3] = tracker_pose[:3] * self.trans_scale + self.init_arm_ee_to_world[:3, 3]
         
@@ -337,7 +308,7 @@ def main(ip, port, control_rate, translation_scale, target_frame):
     error_count = 0
     skip_commands = 0
     waiting_for_first_pose = True
-
+    robot.grasp_object()
     try:
         while rclpy.ok():
             if waiting_for_first_pose:

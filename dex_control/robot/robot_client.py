@@ -273,6 +273,43 @@ class FrankaRobotClient:
         """Calibrate gripper (Homing). usually done once after startup."""
         return self.client.homing_gripper(asynchronous)
 
+    # ------------------------------------------------------------------
+    # Impedance Control / Kinesthetic Teaching
+    # ------------------------------------------------------------------
+    @robust_call()
+    def set_joint_impedance(self, impedance: List[float]) -> bool:
+        """Set joint impedance values.
+
+        Args:
+            impedance: List of 7 impedance values (one per joint).
+                      Lower values = more compliant/backdrivable.
+                      Set all to 0 for pure gravity compensation.
+
+        Returns:
+            bool: True if successful.
+        """
+        return self.client.set_joint_impedance(impedance)
+
+    @robust_call()
+    def start_gravity_compensation(self, duration: float = 3600.0) -> bool:
+        """Start gravity compensation mode for kinesthetic teaching.
+
+        Uses JointVelocityMotion with zero velocities and zero impedance
+        to allow manual manipulation of the robot.
+
+        Args:
+            duration: Duration in seconds (default: 1 hour).
+
+        Returns:
+            bool: True if motion started successfully.
+        """
+        return self.client.start_gravity_compensation(duration)
+
+    @robust_call()
+    def stop_motion(self) -> bool:
+        """Stop any ongoing motion."""
+        return self.client.stop_motion()
+
     def close(self):
         """Close the RPC connection."""
         if self.client:

@@ -3,9 +3,12 @@ Action ZMQ Server.
 - Receives action commands from eval.py via ZMQ
 - Controls robot directly via FrankaRobotClient
 - Non-blocking ZMQ
+- Support different python versions
+- Support joint impedance control
 
 Usage:
-    python action_zmq_server.py
+    python 3_zmq_bridge.py --mode joint
+    python 3_zmq_bridge.py --mode cartesian
 """
 
 import time
@@ -73,6 +76,22 @@ class ActionZMQServer:
                 ]
                 self.socket.send_json({"status": "ok", "pose": pose})
 
+            elif cmd == "set_joints":
+                joints = np.array(msg["joints"]).tolist()
+                self.robot.move_joints(joints, asynchronous=True)
+                self.socket.send_json({"status": "ok"})
+                cprint(f"Moved joints to: {joints}", "cyan")
+
+            elif cmd == "get_joints":
+                joints = self.robot.get_joint_positions().tolist()
+                self.socket.send_json({"status": "ok", "joints": joints})
+
+            elif cmd == "set_joint_impedance":
+                impedance = msg.get("impedance", [100.0] * 7)
+                self.robot.set_joint_impedance(impedance)
+                self.socket.send_json({"status": "ok"})
+                cprint(f"Set joint impedance: {impedance}", "cyan")
+
             elif cmd == "stop":
                 self.socket.send_json({"status": "ok"})
                 return True
@@ -110,6 +129,11 @@ def main(ip: str, port: int, zmq_port: int) -> None:
         cprint(f"Connecting to robot at {server_addr}...", "cyan")
         robot = FrankaRobotClient(server_addr=server_addr)
         cprint("Robot connected!", "green")
+
+        # Start joint impedance controller (gravity compensation mode)
+        robot.start_gravity_compensation(duration=3600.0, joint_impedance=5.0)
+        cprint("Joint impedance controller started!", "green")
+
     except Exception as e:
         cprint(f"Error connecting to robot: {e}", "red")
         return
@@ -127,7 +151,9 @@ def main(ip: str, port: int, zmq_port: int) -> None:
     except KeyboardInterrupt:
         cprint("\nShutting down...", "yellow")
     finally:
+        robot.stop_gravity_compensation()
         server.close()
+        robot.close()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 - [x] Integrate teleoperation and data collection workflows  
     - [x] Add error handling, support for reconnecting, recalling, and rerunning processes
 - [x] Add support for inference pipeline
-- [ ] Perform comprehensive real robot testing
+- [x] Perform comprehensive real robot testing
 - [ ] Write a detailed installation guide from scratch
 
 ## Installation

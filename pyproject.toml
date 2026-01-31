@@ -27,6 +27,11 @@ dependencies = [
     "scipy>=1.7.0",
     "pyserial>=3.5",
     "hidapi>=0.14.0",
+    "pyyaml>=5.4.1",
+    "matplotlib>=3.0.0",
+    "pillow>=9.3.0",
+    "pytz>=2020.1",
+    "typeguard>=2.13",
 ]
 
 [project.optional-dependencies]

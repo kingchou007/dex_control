@@ -174,35 +174,120 @@ class FrankaWrapper:
         self.log.error(f"Failed to move after {max_retries} attempts. Manual intervention may be required.")
         return False
 
-    def move_gripper(self, target_width: float, asynchronous: bool = False):
-        """Move the gripper to the given target width.
 
+    # ---------------------------------------------------------
+    # Gripper Implementation 
+    # C++ Documentation: https://timschneider42.github.io/franky/classfranky_1_1_gripper.html#ad496a52d3a7a01926c8fd6e679901a89
+    # ---------------------------------------------------------
+    def move_gripper(self, target_width: float, speed: float = None, asynchronous: bool = False):
+        """Move the gripper to the given target width.
+        
         Args:
-            target_width: Target width of the gripper [m].
-            asynchronous: If True, the gripper move is asynchronous.
+            target_width: Target width [m].
+            speed: Speed [m/s]. If None, use default self.speed.
+            asynchronous: If True, returns immediately.
         """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
+            return False
+
+        cmd_speed = speed if speed is not None else self.speed
 
         if asynchronous:
-            self.gripper.move_async(target_width, self.speed)
+            self.gripper.move_async(target_width, cmd_speed)
+            return True
         else:
-            self.gripper.move(target_width, self.speed)
+            return self.gripper.move(target_width, cmd_speed)
 
-    def grasp_object(self):
-        """Grasp the object with unknown width."""
+    def grasp_object(self, width: float = 0.0, speed: float = None, force: float = None, 
+                     epsilon_inner: float = 0.005, epsilon_outer: float = 0.005, 
+                     asynchronous: bool = False):
+        """Grasp object with specific parameters.
+        
+        Matches the flexible API defined in the Client.
+        """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
-        self.gripper.grasp(0.0, self.speed, self.force, epsilon_outer=1.0)
+            return False
 
-    def release_object(self):
-        """Release the object."""
+        cmd_speed = speed if speed is not None else self.speed
+        cmd_force = force if force is not None else self.force
+
+        if asynchronous:
+            self.gripper.grasp_async(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
+            return True
+        else:
+            return self.gripper.grasp(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
+
+    def open_gripper(self, speed: float = None, asynchronous: bool = False):
+        """Release object / Open gripper fully.
+        
+        Renamed from release_object to match Client API 'open_gripper' 
+        (or you can keep release_object and map it in RPC).
+        """
         if not self.franka_hand:
             self.log.warn("Franka hand not enabled.")
-            return
-        self.gripper.open(self.speed)
+            return False
+
+        cmd_speed = speed if speed is not None else self.speed
+
+        if asynchronous:
+            self.gripper.open_async(cmd_speed)
+            return True
+        else:
+            self.gripper.open(cmd_speed)
+            return True
+
+    def stop_gripper(self, asynchronous: bool = False):
+        """Stop the gripper motion immediately."""
+        if not self.franka_hand:
+            return False
+            
+        if asynchronous:
+            self.gripper.stop_async()
+            return True
+        else:
+            self.gripper.stop()
+            return True
+
+    def homing_gripper(self, asynchronous: bool = False):
+        """Calibrate the gripper."""
+        if not self.franka_hand:
+            return False
+
+        if asynchronous:
+            self.gripper.homing_async()
+            return True
+        else:
+            self.gripper.homing()
+            return True
+
+    # ------------------------------------------------------------------
+    # Gripper State Methods
+    # ------------------------------------------------------------------
+    def get_gripper_width(self) -> float:
+        """Get the current width of the gripper."""
+        if not self.franka_hand:
+            return 0.0
+
+        state = self.gripper.read_once() 
+        return state.width
+
+    def get_gripper_max_width(self) -> float:
+        """Get the maximum width of the gripper."""
+        if not self.franka_hand:
+            return 0.0
+
+        state = self.gripper.read_once()
+        return state.max_width
+
+    def is_gripper_grasped(self) -> bool:
+        """Check if an object is currently grasped."""
+        if not self.franka_hand:
+            return False
+
+        state = self.gripper.read_once()
+        return state.is_grasped
 
     def get_state(self) -> Dict[str, List[float]]:
         """Retrieve current robot state.
@@ -355,6 +440,65 @@ class FrankaWrapper:
     def move_joint_cartesian_velocity(self):
         """Control robot with joint or Cartesian velocity commands (Not yet implemented)."""
         raise NotImplementedError("Not yet implemented")
+
+    def set_joint_impedance(self, impedance: List[float]) -> bool:
+        """Set joint impedance values.
+
+        Args:
+            impedance: List of 7 impedance values (one per joint).
+                      Lower values = more compliant/backdrivable.
+                      Set all to 0 for pure gravity compensation.
+
+        Returns:
+            bool: True if successful.
+        """
+        self.robot.set_joint_impedance(impedance)
+        self.log.info(f"Set joint impedance to {impedance}")
+        return True
+
+    def start_gravity_compensation(self, duration: float = 3600.0) -> bool:
+        """Start gravity compensation mode for kinesthetic teaching.
+
+        Uses JointVelocityMotion with zero velocities and zero impedance
+        to allow manual manipulation of the robot while maintaining pose.
+
+        Args:
+            duration: Duration in seconds (default: 1 hour).
+
+        Returns:
+            bool: True if motion started successfully.
+        """
+        # Set zero impedance for full compliance
+        self.robot.set_joint_impedance([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.log.info("Set joint impedance to zero for gravity compensation")
+
+        # Create zero velocity motion with long duration
+        zero_velocities = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        velocity_motion = JointVelocityMotion(zero_velocities, duration)
+
+        self.log.info(f"Starting gravity compensation mode for {duration}s")
+        self.log.info("Robot is now in kinesthetic teaching mode - you can manually guide it")
+
+        try:
+            self.robot.move(velocity_motion, asynchronous=True)
+            return True
+        except ControlException as e:
+            self.log.error(f"Failed to start gravity compensation: {e}")
+            return False
+
+    def stop_motion(self) -> bool:
+        """Stop any ongoing motion.
+
+        Returns:
+            bool: True if successful.
+        """
+        try:
+            self.robot.stop()
+            self.log.info("Motion stopped")
+            return True
+        except Exception as e:
+            self.log.error(f"Failed to stop motion: {e}")
+            return False
 
 
 @click.command()

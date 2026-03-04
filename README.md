@@ -2,8 +2,6 @@
 
 Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
-**Author:** [Jinzhou Li](https://kingchou007.github.io/)
-
 **Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab. This is the franky version (it's very easy to install, so we do not provide Docker), which you can use for quick testing and simple control. If you need advanced APIs, please use the [ROS2](https://github.com/Robot-Dexterity-Lab/dex-control/tree/ros2) branch (under development).
 
 ## TODO
@@ -131,3 +129,8 @@ python dex_control/robot/robot_client.py --ip <NUC_IP>
 ```
 
 Reset script: `python scripts/reset_robot.py`
+
+
+---
+**Author:** [Jinzhou Li](https://kingchou007.github.io/)
+

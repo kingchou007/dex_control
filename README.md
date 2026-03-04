@@ -6,10 +6,6 @@ Franka Research 3 Control Framework supporting teleoperation, real-time control.
 
 **Note:** This project is actively developed and currently intended for internal use within the Duke Dexterity Lab. This is the franky version (it's very easy to install, so we do not provide Docker), which you can use for quick testing and simple control. If you need advanced APIs, please use the [ROS2](https://github.com/Robot-Dexterity-Lab/dex-control/tree/ros2) branch (under development).
 
-
-![Demo](assets/example.gif)
-
-
 ## TODO
 
 - [x] Communication

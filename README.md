@@ -130,7 +130,6 @@ python dex_control/robot/robot_client.py --ip <NUC_IP>
 
 Reset script: `python scripts/reset_robot.py`
 
-
 ---
 **Author:** [Jinzhou Li](https://kingchou007.github.io/)
 

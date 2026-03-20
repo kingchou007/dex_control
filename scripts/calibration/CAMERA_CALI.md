@@ -39,11 +39,11 @@ cd dex-control
 python dex_control/robot/franka_wrapper.py 
 ```
 
-4. Open a new terminal to start `4_kinesthetic_teaching.py`:
+4. Open a new terminal to start `4_kinesthetic_teaching_cali.py`:
 ```bash
 conda activate dex-control
-cd dex-control/examples
-python 4_kinesthetic_teaching.py 
+cd dex-control/scripts/calibration
+python 4_kinesthetic_teaching_cali.py 
 ```
 
 5. Open a new terminal to start eye-to-hand calibration:

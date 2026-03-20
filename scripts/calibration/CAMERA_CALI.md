@@ -43,7 +43,7 @@ python dex_control/robot/franka_wrapper.py
 ```bash
 conda activate dex-control
 cd dex-control/scripts/calibration
-python 4_kinesthetic_teaching_cali.py 
+python kinesthetic_teaching_cali.py 
 ```
 
 5. Open a new terminal to start eye-to-hand calibration:

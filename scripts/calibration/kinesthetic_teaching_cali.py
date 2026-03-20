@@ -1,24 +1,4 @@
-"""Kinesthetic Teaching Example for Franka Robot
-
-Enables gravity compensation mode allowing manual guidance of the robot arm.
-Publishes robot state to ROS2 topics while teaching for recording.
-
-Usage:
-    python examples/4_kinesthetic_teaching.py [OPTIONS]
-
-Options:
-    --ip: Robot server IP address (default: 192.168.1.6)
-    --port: Robot server port (default: 4242)
-    --duration: Duration in seconds (default: 300)
-    --impedance: Joint impedance (default: 5.0, higher = stiffer)
-    --ros2-rate: ROS2 publish rate in Hz (default: 100)
-
-ROS2 Topics Published:
-    /franka/ee_pose (geometry_msgs/PoseStamped): End-effector pose
-    /franka/joint_states (sensor_msgs/JointState): Joint positions
-    /franka/gripper_width (std_msgs/Float32): Gripper width
-"""
-
+"""Kinesthetic Teaching Example for Franka Robot Camera Calibration"""
 import time
 import click
 from termcolor import cprint

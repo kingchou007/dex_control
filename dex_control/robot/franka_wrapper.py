@@ -12,14 +12,17 @@ Reference: https://timschneider42.github.io/franky/index.html
 """
 
 import time
+from concurrent import futures
 from typing import List, Optional, Dict, Any, Union
 
 import click
+import grpc
 import numpy as np
 import spdlog
-import zerorpc
 from franky import *
 from scipy.spatial.transform import Rotation as R
+
+from dex_control.proto import franka_pb2, franka_pb2_grpc
 
 
 class FrankaWrapper:
@@ -501,19 +504,110 @@ class FrankaWrapper:
             return False
 
 
+class FrankaServicer(franka_pb2_grpc.FrankaRobotServicer):
+    """gRPC servicer that bridges proto messages to FrankaWrapper."""
+
+    def __init__(self, wrapper: FrankaWrapper):
+        self.w = wrapper
+
+    # -- State --
+    def GetJointPositions(self, request, context):
+        return franka_pb2.JointValues(values=self.w.get_joint_positions())
+
+    def GetEePose(self, request, context):
+        pose = self.w.get_ee_pose()
+        return franka_pb2.EePose(translation=pose["t"], quaternion=pose["q"])
+
+    def GetExternalTorques(self, request, context):
+        return franka_pb2.JointValues(values=self.w.get_external_torques())
+
+    def GetState(self, request, context):
+        state = self.w.get_state()
+        data = {k: franka_pb2.DoubleList(values=v) for k, v in state.items()}
+        return franka_pb2.RobotState(data=data)
+
+    # -- Motion --
+    def MoveEePose(self, request, context):
+        ok = self.w.move_ee_pose(list(request.target_pose), request.asynchronous, request.delta)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def MoveEeWaypoints(self, request, context):
+        wps = [list(wp.values) for wp in request.waypoints]
+        self.w.move_ee_waypoints(wps, request.delta)
+        return franka_pb2.BoolResponse(success=True)
+
+    def MoveJoints(self, request, context):
+        ok = self.w.move_joints(list(request.target_positions), request.asynchronous)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def MoveJointWaypoints(self, request, context):
+        wps = [list(wp.values) for wp in request.waypoints]
+        self.w.move_joint_waypoints(wps)
+        return franka_pb2.BoolResponse(success=True)
+
+    # -- Gripper state --
+    def GetGripperWidth(self, request, context):
+        return franka_pb2.FloatResponse(value=self.w.get_gripper_width())
+
+    def GetGripperMaxWidth(self, request, context):
+        return franka_pb2.FloatResponse(value=self.w.get_gripper_max_width())
+
+    def IsGripperGrasped(self, request, context):
+        return franka_pb2.BoolResponse(success=self.w.is_gripper_grasped())
+
+    # -- Gripper control --
+    def MoveGripper(self, request, context):
+        ok = self.w.move_gripper(request.target_width, request.speed, request.asynchronous)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def OpenGripper(self, request, context):
+        ok = self.w.open_gripper(request.speed, request.asynchronous)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def GraspObject(self, request, context):
+        ok = self.w.grasp_object(
+            request.width, request.speed, request.force,
+            request.epsilon_inner, request.epsilon_outer, request.asynchronous,
+        )
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def StopGripper(self, request, context):
+        ok = self.w.stop_gripper(request.asynchronous)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def HomingGripper(self, request, context):
+        ok = self.w.homing_gripper(request.asynchronous)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    # -- Impedance --
+    def SetJointImpedance(self, request, context):
+        ok = self.w.set_joint_impedance(list(request.values))
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def StartGravityCompensation(self, request, context):
+        ok = self.w.start_gravity_compensation(request.duration)
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+    def StopMotion(self, request, context):
+        ok = self.w.stop_motion()
+        return franka_pb2.BoolResponse(success=bool(ok))
+
+
 @click.command()
 @click.option("--ip", default="192.168.1.33", help="Robot IP address")
 @click.option("--controller-type", default="joint_impedance", help="Controller type")
 @click.option("--port", default=4242, help="Port number")
 @click.option("--teleop", is_flag=True, default=True, help="Enable teleoperation")
 def main(ip, controller_type, port, teleop):
-    """Start Franka RPC server."""
-    server = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=teleop)
-    s = zerorpc.Server(server, heartbeat=None)
-    s.bind(f"tcp://0.0.0.0:{port}")
-    server.log.info(f"Franka Server listening on tcp://0.0.0.0:{port}")
-    server.log.info(f"Teleoperation: {teleop}")
-    s.run()
+    """Start Franka gRPC server."""
+    wrapper = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=teleop)
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    franka_pb2_grpc.add_FrankaRobotServicer_to_server(FrankaServicer(wrapper), server)
+    server.add_insecure_port(f"0.0.0.0:{port}")
+    server.start()
+    wrapper.log.info(f"Franka gRPC server listening on 0.0.0.0:{port}")
+    wrapper.log.info(f"Teleoperation: {teleop}")
+    server.wait_for_termination()
 
 
 if __name__ == "__main__":

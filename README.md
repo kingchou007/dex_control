@@ -1,54 +1,47 @@
 # dex-control
 
-Franka Research 3 Control Framework supporting teleoperation, real-time control.
+Franka Research 3 Control Framework supporting teleoperation, data collection, and real-time control.
 
-## TODO
+## Features
 
-- [x] Communication
-- [x] Basic control API
-- [x] Integrate teleoperation and data collection workflows  
-    - [x] Add error handling, support for reconnecting, recalling, and rerunning processes
-- [x] Add support for inference pipeline
-- [x] Perform comprehensive real robot testing
-- [ ] Write a detailed installation guide from scratch
+- **Client-server architecture** — run the server on the NUC (robot PC) and control from any networked client
+- **Multiple teleoperation modes** — SpaceMouse, hand tracker (FACTr), kinesthetic teaching
+- **Data collection pipeline** — multi-camera recording (RealSense, ZED, GoPro) with synchronized trajectories
+- **Gripper support** — Robotiq gripper control via serial
+- **Camera calibration** — eye-to-hand calibration utilities
 
 ## Installation
 
-1. **Clone the repository:**
+### Client (Laptop / Desktop)
 
-   On your **laptop or desktop** (local development machine):
-   ```bash
-   git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
-   cd dex-control
-   conda create -n dex-control python=3.10
-   conda activate dex-control
-   pip install .
-   ```
-
-   On the **NUC** (robot/server PC):
-   ```bash
-   bash sync_infra.sh   # (edit LOCAL_DIR and NUC_DIR inside sync_infra.sh as needed)
-   cd dex-control
-   conda create -n dex-control python=3.10
-   conda activate dex-control
-   pip install .
-   bash scripts/install.sh
-   ```
-
-   > **Tip:** Use `--recurse-submodules` during cloning to automatically initialize submodules. Otherwise, after cloning, run `git submodule update --init --recursive`.
-
-   > **Note:** Before making any edits, make sure to run `sync_infra.sh` to synchronize code between your local machine and the NUC.
-
-
-2. (Recommended) Install all dependencies and setup in one step using the provided setup script:
 ```bash
-bash scripts/install_all.sh 
+git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
+cd dex-control
+conda create -n dex-control python=3.10
+conda activate dex-control
+pip install .
 ```
 
+### Robot PC (NUC)
+
+```bash
+bash sync_infra.sh   # edit LOCAL_DIR and NUC_DIR inside sync_infra.sh as needed
+cd dex-control
+conda create -n dex-control python=3.10
+conda activate dex-control
+pip install .
+bash scripts/install.sh
+```
+
+> **Tip:** Use `--recurse-submodules` during cloning to automatically initialize submodules. Otherwise, run `git submodule update --init --recursive` after cloning.
+
+> **Note:** Run `sync_infra.sh` to synchronize code between your local machine and the NUC before making edits.
+
+For the NUC-side ROS 2 controller setup, see [docs/ROBOT_PC.md](docs/ROBOT_PC.md).
 
 ## Usage
 
-We recommend the following tmux setup:
+We recommend the following tmux layout:
 ```
 +-------------------------+-------------------------+
 |                         |                         |
@@ -59,71 +52,99 @@ We recommend the following tmux setup:
 +-------------------------+-------------------------+
 ```
 
-### 1. Start Up (on NUC/Robot PC)
-1. On the NUC, run
+### 1. Start the Server (on NUC)
+
 ```bash
 conda activate dex-control
 python dex_control/robot/franka_wrapper.py --ip <ROBOT_IP> --controller-type joint_impedance
 ```
-2. On the laptop, run
-```bash
-conda activate dex-control
-python basic_control/.py
-```
 
-### 2. Connect from Client (on your PC)
-You can find additional usage examples inside the `examples` directory, such as:
+### 2. Connect from Client (on Laptop)
 
 ```python
 from dex_control.robot.robot_client import FrankaRobotClient
 
-# Initialize client with the NUC's IP address
 robot = FrankaRobotClient(server_addr="tcp://<NUC_IP>:4242")
 
 # Get robot state
 state = robot.get_ee_pose()
 print("Joints:", robot.get_joint_positions())
 
-# Move robot
-robot.move_ee_pose([0.1, 0.0, 0.0], delta=True)  # Move x -> 10 cm
+# Relative move: shift 10 cm in x
+robot.move_ee_pose([0.1, 0.0, 0.0], delta=True)
 
-# Move end-effector to a target pose (translation + quaternion as a list)
-# Example: Move to absolute position [x, y, z, qx, qy, qz, qw]
+# Absolute move: [x, y, z, qx, qy, qz, qw]
 robot.move_ee_pose([0.55, 0.0, 0.4, 0.0, 0.0, 1.0, 0.0], delta=False)
-
-# Move end-effector by a relative translation (in meters)
-# Move z -> 10 cm down (if delta=True, negative z direction moves up)
-# In absolute cmd, +z will move up, -z will move down.
-robot.move_ee_pose([0.0, 0.0, 0.1], delta=True) 
-
-# Move end-effector by a relative translation + orientation change (both relative)
-# [dx, dy, dz, dqx, dqy, dqz, dqw], delta=True
-relative_translation = [0.0, 0.10, 0.0]
-relative_quaternion = [0.0, 0.0, 0.0, 1.0]  # No rotation (relative), of course you can use abs control 
-robot.move_ee_pose(relative_translation + relative_quaternion, delta=True)
 ```
 
 ### Examples
+
+| Script | Description |
+|--------|-------------|
+| `examples/0_basic_control.py` | Basic end-effector control |
+| `examples/1_spacemouse_teleop.py` | SpaceMouse teleoperation |
+| `examples/2_tracker_teleop.py` | Hand tracker teleoperation |
+| `examples/3_zmq_bridge.py` | ZMQ bridge for external communication |
+| `examples/4_kinesthetic_teaching.py` | Kinesthetic teaching / demonstration recording |
+| `examples/6_reset.py` | Reset robot to home pose |
+| `examples/7_replay.py` | Replay a recorded trajectory |
+
 ```bash
+# Basic control
 python examples/0_basic_control.py
-```
 
-or run teleoperation with the SpaceMouse:
-
-```bash
+# SpaceMouse teleoperation
 python examples/1_spacemouse_teleop.py --ip <ROBOT_IP>
 ```
 
-Replace `<ROBOT_IP>` with your NUC or robot server's IP address as needed.
+Replace `<ROBOT_IP>` with your NUC or robot server's IP address.
 
+### Data Collection
 
+See [docs/DATA_COLLECT.md](docs/DATA_COLLECT.md) for the full data collection SOP, including GoPro, RealSense, and recording setup.
 
-### CLI Client Usage
+```bash
+python scripts/data_collect.py
+```
 
-You can also use the client script directly from the command line:
+### Camera Calibration
+
+```bash
+python scripts/calibration/kinesthetic_teaching_cali.py
+python scripts/calibration/cali_eye2hand.py
+```
+
+See [scripts/calibration/CAMERA_CALI.md](scripts/calibration/CAMERA_CALI.md) for detailed instructions.
+
+### CLI Client
 
 ```bash
 python dex_control/robot/robot_client.py --ip <NUC_IP>
 ```
 
-Reset script: `python scripts/reset_robot.py`
+### Reset Robot
+
+```bash
+python scripts/reset_robot.py
+```
+
+## Project Structure
+
+```
+dex-control/
+├── dex_control/
+│   ├── robot/          # Server, client, and robot interface
+│   ├── teleop/         # Teleoperation backends (SpaceMouse, FACTr)
+│   ├── camera/         # Camera drivers (RealSense, ZED, GoPro)
+│   ├── gripper/        # Gripper control (Robotiq)
+│   ├── data/           # Data processing utilities
+│   └── utils/          # Shared utilities
+├── examples/           # Usage examples
+├── scripts/            # Setup, calibration, and data collection scripts
+├── docs/               # Additional documentation
+└── assets/             # Media assets
+```
+
+## Acknowledgments
+
+This repo is built with [franky](https://github.com/TimSchneider42/franky) as the low-level Franka control interface, and draws inspiration from [DROID](https://github.com/droid-dataset/droid) and [EVA](https://github.com/willjhliang/eva) to simplify the codebase.

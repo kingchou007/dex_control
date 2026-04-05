@@ -50,7 +50,6 @@ ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
 ```sh
 conda deactivate
 source install/setup.bash
-cd ~/Documents/datacollect_toolchange
-$ python3 data_collect_noaudio.py 
+$ python3 data_collect.py 
 press Enter twice to start collecting data, and press Enter to stop Data Collection
 ```

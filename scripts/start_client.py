@@ -11,6 +11,8 @@ Usage:
     python scripts/start_client.py --config config/my_robot.yaml
 """
 
+import warnings
+
 import click
 import yaml
 from pathlib import Path
@@ -32,7 +34,11 @@ def load_server_addr(config_path: str = None) -> str:
         if not remote:
             host = "localhost"
         return f"tcp://{host}:{port}"
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError:
+        warnings.warn(f"Config not found: {path}, using default tcp://192.168.1.7:4242")
+        return "tcp://192.168.1.7:4242"
+    except KeyError as e:
+        warnings.warn(f"Missing key {e} in {path}, using default tcp://192.168.1.7:4242")
         return "tcp://192.168.1.7:4242"
 
 

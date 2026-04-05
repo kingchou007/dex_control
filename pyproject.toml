@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dex-control"
 version = "0.1.0"
-description = "Remote control framework for Franka arm using gRPC"
+description = "Remote control framework for Franka arm using zerorpc"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -22,8 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "grpcio>=1.60.0",
-    "protobuf>=4.25.0",
+    "zerorpc>=0.6.3",
     "numpy>=1.20.0",
     "scipy>=1.7.0",
     "pyserial>=3.5",

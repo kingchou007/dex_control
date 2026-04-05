@@ -12,54 +12,46 @@ Reference: https://timschneider42.github.io/franky/index.html
 """
 
 import time
-from concurrent import futures
 from typing import List, Optional, Dict, Any, Union
 
-import click
-import grpc
 import numpy as np
 import spdlog
 from franky import *
+from omegaconf import DictConfig, OmegaConf
 from scipy.spatial.transform import Rotation as R
-
-from dex_control.proto import franka_pb2, franka_pb2_grpc
 
 
 class FrankaWrapper:
     """Wrapper class for controlling the Franka robot."""
 
-    def __init__(
-        self,
-        ip: str,
-        controller_type: str = "joint_impedance",
-        franka_hand: bool = False,
-        teleop: bool = False,
-    ):
+    def __init__(self, cfg: DictConfig):
         """Initialize the FrankaWrapper.
 
         Args:
-            ip: IP address of the robot.
-            controller_type: Type of controller to use ("joint_impedance" or "cartesian_impedance").
-            franka_hand: Whether the Franka hand is attached. Default is False, we use robotiq hand instead.
-            teleop: Whether this is for teleoperation (affects dynamics settings).
+            cfg: Hydra DictConfig with keys: server, controller, gripper,
+                 home_position, collision_thresholds, teleop.
         """
+        self.cfg = cfg
+
         # Initialize logger
         self.log = spdlog.ConsoleLogger("FrankaWrapper")
         self.log.set_level(spdlog.LogLevel.INFO)
 
+        ip = cfg.server.ip
         self.log.info(f"Initializing FrankaWrapper with IP: {ip}")
         self.ip = ip
         self.robot = Robot(ip)
-        self.teleop = teleop
+        self.teleop = cfg.get("teleop", False)
         self.robot.recover_from_errors()
-        self.franka_hand = franka_hand
+        self.franka_hand = cfg.gripper.enabled
         self._setup_franka_hand()
         self._setup_home_position()
-        self._setup_controller_parameters(controller_type)
+        self._setup_controller_parameters(cfg.controller.type)
 
     def _setup_home_position(self):
         """Set up home position (faster)."""
-        joint_motion = JointMotion([0.09162, -0.19826, -0.01990, -2.47323, -0.01307, 2.30397, 0.84809])
+        home = list(self.cfg.home_position)
+        joint_motion = JointMotion(home)
         self.robot.relative_dynamics_factor = 0.2
         self.robot.move(joint_motion, asynchronous=False)
         time.sleep(0.1)
@@ -87,26 +79,24 @@ class FrankaWrapper:
                 * Lower = slower but smoother; Higher = faster but more prone to errors.
                 * For safe teleoperation, a value of 0.05 is typical; tune as needed for your application.
         """
+        col = self.cfg.collision_thresholds
+        col_joint = list(col.joint)
+        col_cart = list(col.cartesian)
+
         self.log.info("Set collision behavior")
-        self.robot.set_collision_behavior(
-            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-            [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-        )
+        self.robot.set_collision_behavior(col_joint, col_joint, col_cart, col_cart)
+
+        ctrl = self.cfg.controller
 
         self.log.info(f"Set Controller Type: {controller_type}")
         if controller_type == "cartesian_impedance":
-            self.robot.set_cartesian_impedance([
-                1000.0, 1000.0, 1000.0,
-                30.0, 30.0, 30.0
-            ])
+            self.robot.set_cartesian_impedance(list(ctrl.cartesian_impedance))
         elif controller_type == "joint_impedance":
-            self.robot.set_joint_impedance([50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0])
+            self.robot.set_joint_impedance(list(ctrl.joint_impedance))
         else:
             raise ValueError(f"Invalid controller type: {controller_type}")
 
-        self.robot.relative_dynamics_factor = 0.05
+        self.robot.relative_dynamics_factor = ctrl.dynamics_factor
 
     def _setup_franka_hand(self):
         """Set up franka hand parameters."""
@@ -117,8 +107,8 @@ class FrankaWrapper:
             except ImportError:
                 self.log.warn("Warning: Gripper not found in franky.")
 
-            self.speed = 0.02  # [m/s]
-            self.force = 20.0  # [N]
+            self.speed = self.cfg.gripper.speed
+            self.force = self.cfg.gripper.force
 
         self.log.info(f"Set up franka hand: {self.franka_hand}")
 
@@ -503,112 +493,3 @@ class FrankaWrapper:
             self.log.error(f"Failed to stop motion: {e}")
             return False
 
-
-class FrankaServicer(franka_pb2_grpc.FrankaRobotServicer):
-    """gRPC servicer that bridges proto messages to FrankaWrapper."""
-
-    def __init__(self, wrapper: FrankaWrapper):
-        self.w = wrapper
-
-    # -- State --
-    def GetJointPositions(self, request, context):
-        return franka_pb2.JointValues(values=self.w.get_joint_positions())
-
-    def GetEePose(self, request, context):
-        pose = self.w.get_ee_pose()
-        return franka_pb2.EePose(translation=pose["t"], quaternion=pose["q"])
-
-    def GetExternalTorques(self, request, context):
-        return franka_pb2.JointValues(values=self.w.get_external_torques())
-
-    def GetState(self, request, context):
-        state = self.w.get_state()
-        data = {k: franka_pb2.DoubleList(values=v) for k, v in state.items()}
-        return franka_pb2.RobotState(data=data)
-
-    # -- Motion --
-    def MoveEePose(self, request, context):
-        ok = self.w.move_ee_pose(list(request.target_pose), request.asynchronous, request.delta)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def MoveEeWaypoints(self, request, context):
-        wps = [list(wp.values) for wp in request.waypoints]
-        self.w.move_ee_waypoints(wps, request.delta)
-        return franka_pb2.BoolResponse(success=True)
-
-    def MoveJoints(self, request, context):
-        ok = self.w.move_joints(list(request.target_positions), request.asynchronous)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def MoveJointWaypoints(self, request, context):
-        wps = [list(wp.values) for wp in request.waypoints]
-        self.w.move_joint_waypoints(wps)
-        return franka_pb2.BoolResponse(success=True)
-
-    # -- Gripper state --
-    def GetGripperWidth(self, request, context):
-        return franka_pb2.FloatResponse(value=self.w.get_gripper_width())
-
-    def GetGripperMaxWidth(self, request, context):
-        return franka_pb2.FloatResponse(value=self.w.get_gripper_max_width())
-
-    def IsGripperGrasped(self, request, context):
-        return franka_pb2.BoolResponse(success=self.w.is_gripper_grasped())
-
-    # -- Gripper control --
-    def MoveGripper(self, request, context):
-        ok = self.w.move_gripper(request.target_width, request.speed, request.asynchronous)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def OpenGripper(self, request, context):
-        ok = self.w.open_gripper(request.speed, request.asynchronous)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def GraspObject(self, request, context):
-        ok = self.w.grasp_object(
-            request.width, request.speed, request.force,
-            request.epsilon_inner, request.epsilon_outer, request.asynchronous,
-        )
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def StopGripper(self, request, context):
-        ok = self.w.stop_gripper(request.asynchronous)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def HomingGripper(self, request, context):
-        ok = self.w.homing_gripper(request.asynchronous)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    # -- Impedance --
-    def SetJointImpedance(self, request, context):
-        ok = self.w.set_joint_impedance(list(request.values))
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def StartGravityCompensation(self, request, context):
-        ok = self.w.start_gravity_compensation(request.duration)
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-    def StopMotion(self, request, context):
-        ok = self.w.stop_motion()
-        return franka_pb2.BoolResponse(success=bool(ok))
-
-
-@click.command()
-@click.option("--ip", default="192.168.1.33", help="Robot IP address")
-@click.option("--controller-type", default="joint_impedance", help="Controller type")
-@click.option("--port", default=4242, help="Port number")
-@click.option("--teleop", is_flag=True, default=True, help="Enable teleoperation")
-def main(ip, controller_type, port, teleop):
-    """Start Franka gRPC server."""
-    wrapper = FrankaWrapper(ip, controller_type, franka_hand=True, teleop=teleop)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    franka_pb2_grpc.add_FrankaRobotServicer_to_server(FrankaServicer(wrapper), server)
-    server.add_insecure_port(f"0.0.0.0:{port}")
-    server.start()
-    wrapper.log.info(f"Franka gRPC server listening on 0.0.0.0:{port}")
-    wrapper.log.info(f"Teleoperation: {teleop}")
-    server.wait_for_termination()
-
-
-if __name__ == "__main__":
-    main()

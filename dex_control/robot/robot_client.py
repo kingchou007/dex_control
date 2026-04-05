@@ -2,122 +2,136 @@
 
 Author: Jinzhou Li
 
-This client provides a Python interface to control the Franka robot remotely via gRPC.
-Includes automatic retry and reconnection logic for robust operation.
+This client provides a Python interface to control the Franka robot remotely via RPC.
+It uses zerorpc for communication with the robot server and includes automatic retry
+and reconnection logic for robust operation.
 
 Usage:
     from dex_control.robot.robot_client import FrankaRobotClient
 
-    robot = FrankaRobotClient(server_addr="192.168.1.7:4242")
+    robot = FrankaRobotClient(server_addr="tcp://192.168.1.7:4242")
     pose = robot.get_ee_pose()
     robot.move_ee_pose([0.0, 0.0, 0.01], delta=True)  # Move down 1cm
-
-See also:
-    https://github.com/willjhliang/eva/blob/main/eva/robot/server_interface.py
 """
 
 import time
+import functools
 from typing import List, Dict, Any
 import numpy as np
+import zerorpc
 import click
-import grpc
 import spdlog
-
-from dex_control.proto import franka_pb2, franka_pb2_grpc
 
 logger = spdlog.ConsoleLogger("FrankaRobotClient")
 logger.set_level(spdlog.LogLevel.INFO)
 
-_EMPTY = franka_pb2.Empty()
+
+def robust_call(max_retries: int = 3, reconnect: bool = True):
+    """Decorator to automatically retry and reconnect failed zerorpc calls.
+
+    Args:
+        max_retries: Maximum number of retry attempts (default: 3).
+        reconnect: Whether to attempt reconnecting after each failure (default: True).
+
+    Returns:
+        Decorated function with retry and reconnection logic.
+
+    See also:
+        https://github.com/willjhliang/eva/blob/main/eva/robot/server_interface.py
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            last_err = None
+            for i in range(max_retries):
+                try:
+                    return func(self, *args, **kwargs)
+                except zerorpc.exceptions.RemoteError as e:
+                    last_err = e
+                    logger.warn(f"RemoteError in {func.__name__}, attempt {i+1}/{max_retries}: {e}")
+                except zerorpc.exceptions.TimeoutExpired as e:
+                    last_err = e
+                    logger.warn(f"Timeout in {func.__name__}, attempt {i+1}/{max_retries}: {e}")
+                except Exception as e:
+                    last_err = e
+                    logger.error(f"Unexpected error in {func.__name__}, attempt {i+1}/{max_retries}: {e}")
+
+                if reconnect:
+                    try:
+                        logger.info("Reconnecting RPC client...")
+                        self._connect()
+                    except Exception as e:
+                        logger.error(f"Reconnect failed: {e}")
+
+                time.sleep(0.5)
+
+            logger.error(f"All {max_retries} attempts failed for {func.__name__}, raising last error.")
+            if last_err is not None:
+                raise last_err
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
 
 
 class FrankaRobotClient:
-    """Robot client for controlling the Franka robot remotely via gRPC.
+    """Robot client for controlling the Franka robot remotely via RPC.
 
-    All RPC calls are automatically retried with exponential backoff.
+    All RPC calls are automatically retried with reconnection via @robust_call.
     """
 
-    def __init__(self, server_addr: str = "192.168.1.7:4242", max_retries: int = 3):
+    def __init__(self, server_addr: str = "tcp://192.168.1.7:4242"):
         """Initialize the FrankaRobotClient.
 
         Args:
-            server_addr: gRPC server address (e.g., "192.168.1.7:4242").
-            max_retries: Max retry attempts for each RPC call (default: 3).
+            server_addr: RPC server address (e.g., "tcp://192.168.1.7:4242").
         """
         self.server_addr = server_addr
-        self.max_retries = max_retries
-        self.channel: grpc.Channel = None
-        self.stub: franka_pb2_grpc.FrankaRobotStub = None
+        self.client: zerorpc.Client = None
         self._connect()
 
     def _connect(self):
-        """(Re)establish gRPC channel."""
-        if self.channel is not None:
-            self.channel.close()
-        self.channel = grpc.insecure_channel(self.server_addr)
-        self.stub = franka_pb2_grpc.FrankaRobotStub(self.channel)
+        """Establish connection to the Franka RPC server."""
+        self.client = zerorpc.Client(heartbeat=20, timeout=60)
+        self.client.connect(self.server_addr)
         logger.info(f"Connected to robot server at {self.server_addr}")
-
-    def _call(self, method: str, request=None):
-        """Call a gRPC method with automatic retry and reconnection.
-
-        Args:
-            method: Name of the stub method to call.
-            request: Protobuf request message (defaults to Empty).
-        """
-        if request is None:
-            request = _EMPTY
-        last_err = None
-        for i in range(self.max_retries):
-            try:
-                return getattr(self.stub, method)(request)
-            except grpc.RpcError as e:
-                last_err = e
-                logger.warn(f"gRPC error in {method}, attempt {i+1}/{self.max_retries}: {e}")
-
-            is_last = i == self.max_retries - 1
-            if not is_last:
-                try:
-                    logger.info("Reconnecting gRPC channel...")
-                    self._connect()
-                except Exception as e:
-                    logger.error(f"Reconnect failed: {e}")
-                time.sleep(0.5 * (2 ** i))
-
-        raise last_err  # type: ignore[misc]
 
     # ------------------------------------------------------------------
     # State
     # ------------------------------------------------------------------
 
+    @robust_call()
     def get_joint_positions(self) -> np.ndarray:
         """Get current joint positions (7 joint angles in radians)."""
-        resp = self._call("GetJointPositions")
-        return np.array(resp.values)
+        return np.array(self.client.get_joint_positions())
 
+    @robust_call()
     def get_ee_pose(self) -> Dict[str, np.ndarray]:
         """Get current end-effector pose.
 
         Returns:
             Dictionary with 't' (translation [x,y,z]) and 'q' (quaternion [qx,qy,qz,qw]).
         """
-        resp = self._call("GetEePose")
-        return {"t": np.array(resp.translation), "q": np.array(resp.quaternion)}
+        pose = self.client.get_ee_pose()
+        return {
+            "t": np.array(pose["t"]),
+            "q": np.array(pose["q"])
+        }
 
+    @robust_call()
     def get_external_torques(self) -> np.ndarray:
         """Get external torques on each joint (7 values in Nm)."""
-        resp = self._call("GetExternalTorques")
-        return np.array(resp.values)
+        return np.array(self.client.get_external_torques())
 
+    @robust_call()
     def get_state(self) -> Dict[str, Any]:
         """Get full robot state."""
-        resp = self._call("GetState")
-        return {k: list(v.values) for k, v in resp.data.items()}
+        return self.client.get_state()
 
     # ------------------------------------------------------------------
     # Motion
     # ------------------------------------------------------------------
 
+    @robust_call()
     def move_ee_pose(
         self,
         target_ee_pose: List[float],
@@ -131,70 +145,65 @@ class FrankaRobotClient:
             asynchronous: If True, return immediately without waiting.
             delta: If True, interpret pose as relative change.
         """
-        req = franka_pb2.MoveEePoseRequest(
-            target_pose=target_ee_pose, asynchronous=asynchronous, delta=delta,
-        )
-        return self._call("MoveEePose", req).success
+        return self.client.move_ee_pose(target_ee_pose, asynchronous, delta)
 
+    @robust_call()
     def move_ee_waypoints(self, waypoints: List[List[float]], delta: bool = True) -> bool:
         """Move end-effector through a sequence of waypoints."""
-        wps = [franka_pb2.DoubleList(values=wp) for wp in waypoints]
-        req = franka_pb2.WaypointsRequest(waypoints=wps, delta=delta)
-        return self._call("MoveEeWaypoints", req).success
+        return self.client.move_ee_waypoints(waypoints, delta)
 
+    @robust_call()
     def move_joints(
         self,
         target_joint_positions: List[float],
         asynchronous: bool = False,
     ) -> bool:
         """Move joints to target configuration (7 angles in radians)."""
-        req = franka_pb2.MoveJointsRequest(
-            target_positions=target_joint_positions, asynchronous=asynchronous,
-        )
-        return self._call("MoveJoints", req).success
+        return self.client.move_joints(target_joint_positions, asynchronous)
 
+    @robust_call()
     def move_joint_waypoints(self, waypoints: List[List[float]]) -> bool:
         """Move joints through a sequence of waypoints."""
-        wps = [franka_pb2.DoubleList(values=wp) for wp in waypoints]
-        req = franka_pb2.WaypointsRequest(waypoints=wps)
-        return self._call("MoveJointWaypoints", req).success
+        return self.client.move_joint_waypoints(waypoints)
 
     # ------------------------------------------------------------------
     # Gripper State
     # ------------------------------------------------------------------
 
+    @robust_call()
     def get_gripper_width(self) -> float:
         """Get current gripper width in meters."""
-        return self._call("GetGripperWidth").value
+        return float(self.client.get_gripper_width())
 
+    @robust_call()
     def get_gripper_max_width(self) -> float:
         """Get maximum gripper width in meters."""
-        return self._call("GetGripperMaxWidth").value
+        return float(self.client.get_gripper_max_width())
 
+    @robust_call()
     def is_gripper_grasped(self) -> bool:
         """Check if gripper is currently holding an object."""
-        return self._call("IsGripperGrasped").success
+        return bool(self.client.is_gripper_grasped())
 
     # ------------------------------------------------------------------
     # Gripper Control
     # ------------------------------------------------------------------
 
+    @robust_call()
     def move_gripper(self, target_width: float, speed: float = 0.1, asynchronous: bool = False) -> bool:
         """Move gripper to specific width (meters)."""
-        req = franka_pb2.MoveGripperRequest(
-            target_width=target_width, speed=speed, asynchronous=asynchronous,
-        )
-        return self._call("MoveGripper", req).success
+        return self.client.move_gripper(target_width, speed, asynchronous)
 
+    @robust_call()
     def open_gripper(self, speed: float = 0.1, asynchronous: bool = False) -> bool:
         """Fully open the gripper."""
-        req = franka_pb2.GripperActionRequest(speed=speed, asynchronous=asynchronous)
-        return self._call("OpenGripper", req).success
+        return self.client.open_gripper(speed, asynchronous)
 
     def release_object(self) -> bool:
         """Alias for open_gripper."""
         return self.open_gripper()
 
+    @robust_call()
     def grasp_object(
         self,
         width: float = 0.0,
@@ -214,49 +223,45 @@ class FrankaRobotClient:
             epsilon_outer: Tolerance for object larger than expected.
             asynchronous: If True, return immediately.
         """
-        req = franka_pb2.GraspRequest(
-            width=width, speed=speed, force=force,
-            epsilon_inner=epsilon_inner, epsilon_outer=epsilon_outer,
-            asynchronous=asynchronous,
-        )
-        return self._call("GraspObject", req).success
+        return self.client.grasp_object(width, speed, force, epsilon_inner, epsilon_outer, asynchronous)
 
+    @robust_call()
     def stop_gripper(self, asynchronous: bool = False) -> bool:
         """Immediately stop gripper motion."""
-        req = franka_pb2.GripperActionRequest(asynchronous=asynchronous)
-        return self._call("StopGripper", req).success
+        return self.client.stop_gripper(asynchronous)
 
+    @robust_call()
     def homing_gripper(self, asynchronous: bool = False) -> bool:
         """Calibrate gripper (homing). Usually done once after startup."""
-        req = franka_pb2.GripperActionRequest(asynchronous=asynchronous)
-        return self._call("HomingGripper", req).success
+        return self.client.homing_gripper(asynchronous)
 
     # ------------------------------------------------------------------
     # Impedance Control / Kinesthetic Teaching
     # ------------------------------------------------------------------
 
+    @robust_call()
     def set_joint_impedance(self, impedance: List[float]) -> bool:
         """Set joint impedance values (7 values, lower = more compliant)."""
-        req = franka_pb2.JointValues(values=impedance)
-        return self._call("SetJointImpedance", req).success
+        return self.client.set_joint_impedance(impedance)
 
+    @robust_call()
     def start_gravity_compensation(self, duration: float = 3600.0) -> bool:
         """Start gravity compensation mode for kinesthetic teaching.
 
         Args:
             duration: Duration in seconds (default: 1 hour).
         """
-        req = franka_pb2.DurationRequest(duration=duration)
-        return self._call("StartGravityCompensation", req).success
+        return self.client.start_gravity_compensation(duration)
 
+    @robust_call()
     def stop_motion(self) -> bool:
         """Stop any ongoing motion."""
-        return self._call("StopMotion").success
+        return self.client.stop_motion()
 
     def close(self):
-        """Close the gRPC channel."""
-        if self.channel is not None:
-            self.channel.close()
+        """Close the RPC connection."""
+        if self.client:
+            self.client.close()
 
 
 @click.command()
@@ -265,7 +270,7 @@ class FrankaRobotClient:
 def main(ip, port):
     """Franka Robot Client CLI - Test connection and get robot state."""
     try:
-        robot = FrankaRobotClient(f"{ip}:{port}")
+        robot = FrankaRobotClient(f"tcp://{ip}:{port}")
 
         logger.info("Testing robot connection...")
 

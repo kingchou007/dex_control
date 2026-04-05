@@ -1,9 +1,7 @@
 import time
 
-import grpc
 import numpy as np
-
-from dex_control.proto import franka_pb2, franka_pb2_grpc
+import zerorpc
 
 
 def attempt_n_times(function_list, max_attempts, sleep_time=0.1):
@@ -14,7 +12,7 @@ def attempt_n_times(function_list, max_attempts, sleep_time=0.1):
         try:
             [f() for f in function_list]
             return
-        except grpc.RpcError as err:
+        except zerorpc.exceptions.RemoteError as err:
             last_attempt = i == (max_attempts - 1)
             if last_attempt:
                 raise err
@@ -32,8 +30,8 @@ class ServerInterface:
             attempt_n_times(func_list, max_attempts=2)
 
     def establish_connection(self):
-        self.channel = grpc.insecure_channel(f"{self.ip_address}:4242")
-        self.server = franka_pb2_grpc.FrankaRobotStub(self.channel)
+        self.server = zerorpc.Client(heartbeat=20)
+        self.server.connect("tcp://" + self.ip_address + ":4242")
 
     def launch_controller(self):
         self.server.launch_controller()

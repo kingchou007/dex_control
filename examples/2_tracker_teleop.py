@@ -1,29 +1,28 @@
-"""Pose Tracker Teleoperation for Franka robot via ROS2 (TF Version)
+"""Pose Tracker Teleoperation for Franka robot via ZMQ
 
-Subscribe to /tf topic (specifically for 'vive_tracker' frame) 
-and teleoperate the Franka robot.
+Subscribes to tracker pose via ZMQ and teleoperates the Franka robot.
+Publishes robot state via ZMQ for data collection.
 
 Usage:
     python examples/2_tracker_teleop.py [OPTIONS]
+
+The tracker source (e.g. vive_tracker) should publish pose as JSON via ZMQ PUB:
+    {"position": [x, y, z], "orientation": [qx, qy, qz, qw]}
 """
 
 import threading
 import time
+import json
 import numpy as np
 import click
+import zmq
 import spdlog
 from termcolor import cprint
 from transforms3d.quaternions import quat2mat, mat2quat
 from scipy.spatial.transform import Rotation as R
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import JointState
-from tf2_msgs.msg import TFMessage  # Import TFMessage
-
 from dex_control.robot.robot_client import FrankaRobotClient
+from dex_control.utils.zmq_publisher import ZMQStatePublisher
 
 
 # Default CONFIG
@@ -31,7 +30,6 @@ DEFAULT_IP = "192.168.1.6"
 DEFAULT_PORT = 4242
 CONTROL_RATE_HZ = 50
 TRANSLATION_SCALE = 1.0
-DEFAULT_TARGET_FRAME = "vive_tracker"  # Default frame from your log
 
 # Safety Limits
 MAX_DELTA_TRANSLATION = 0.5  # Maximum position delta per step (m)
@@ -72,144 +70,113 @@ class ViveSignalProcessor:
         rel_pos = pos_transformed - self.init_pos
         rel_rot = self.init_rot_inv * curr_rot
         qx, qy, qz, qw = rel_rot.as_quat()
-        
+
         return rel_pos, np.array([qw, qx, qy, qz])
 
-class TrackerTeleopNode(Node):
-    """ROS2 node for pose tracker teleoperation via TF."""
 
-    def __init__(
-        self,
-        robot: FrankaRobotClient,
-        trans_scale: float = 1.0,
-        target_frame: str = "vive_tracker"
-    ):
-        super().__init__("tracker_teleop")
+class TrackerZMQReceiver:
+    """Receives tracker pose via ZMQ SUB in a background thread."""
 
+    def __init__(self, host: str = "localhost", port: int = 5558):
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.SUB)
+        self.socket.connect(f"tcp://{host}:{port}")
+        self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.socket.setsockopt(zmq.RCVTIMEO, 100)
+
+        self.lock = threading.Lock()
+        self.latest_pose = None  # {"position": [x,y,z], "orientation": [qx,qy,qz,qw]}
+        self.pose_updated = False
+        self.running = True
+        self.thread = threading.Thread(target=self._recv_loop, daemon=True)
+        self.thread.start()
+
+    def _recv_loop(self):
+        while self.running:
+            try:
+                msg = self.socket.recv_string()
+                data = json.loads(msg)
+                with self.lock:
+                    self.latest_pose = data
+                    self.pose_updated = True
+            except zmq.Again:
+                continue
+
+    def get_pose(self):
+        """Returns (position, orientation_xyzw) or (None, None)."""
+        with self.lock:
+            if self.latest_pose is None:
+                return None, None
+            pos = self.latest_pose["position"]
+            quat = self.latest_pose["orientation"]
+            return pos, quat
+
+    def is_updated(self):
+        with self.lock:
+            updated = self.pose_updated
+            self.pose_updated = False
+            return updated
+
+    def close(self):
+        self.running = False
+        self.thread.join(timeout=1.0)
+        self.socket.close()
+        self.context.term()
+
+
+class TrackerTeleop:
+    """Tracker teleoperation controller."""
+
+    def __init__(self, robot: FrankaRobotClient, trans_scale: float = 1.0):
         self.logger = spdlog.ConsoleLogger("TrackerTeleop")
         self.logger.set_level(spdlog.LogLevel.INFO)
 
         self.robot = robot
         self.trans_scale = trans_scale
-        self.target_frame = target_frame
-        self.lock = threading.Lock()
         self.signal_processor = ViveSignalProcessor()
 
         # Get initial arm pose: [x, y, z, qw, qx, qy, qz] (wxyz quaternion)
         self.init_arm_ee_pose = self._get_tcp_position()
-        
+
         # Build 4x4 transformation matrix from initial pose
         self.init_arm_ee_to_world = np.eye(4)
         self.init_arm_ee_to_world[:3, 3] = self.init_arm_ee_pose[:3]
         self.init_arm_ee_to_world[:3, :3] = quat2mat(self.init_arm_ee_pose[3:7])
-        
-        # Tracker pose: [x, y, z, qw, qx, qy, qz] (wxyz quaternion)
-        self.tracker_pose = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
-        self.tracker_pose_updated = False
-        
+
         # Previous target pose for delta clamping
         self.prev_target_pose = self.init_arm_ee_pose.copy()
 
-        # Set up ROS2 subscribers and publishers
-        self._setup_ros_interfaces()
-        
-        self.logger.info("TrackerTeleopNode initialized")
-        self.logger.info(f"Tracking TF frame: {self.target_frame}")
+        self.logger.info("TrackerTeleop initialized")
         self.logger.info(f"Initial EE pose: {self.init_arm_ee_pose}")
-
-    def _setup_ros_interfaces(self):
-        """Set up all ROS2 subscribers and publishers."""
-        qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
-        
-        # ============ Subscribers ============
-        # Subscribe to /tf topic
-        self.tf_sub = self.create_subscription(
-            TFMessage,
-            "/tf",
-            self._callback_tf,
-            qos_profile,
-        )
-
-        # ============ Publishers ============
-        self.robot_ee_pose_pub = self.create_publisher(
-            PoseStamped,
-            "robot/ee_pose",
-            qos_profile,
-        )
-        
-        self.robot_joint_states_pub = self.create_publisher(
-            JointState,
-            "robot/joint_states",
-            qos_profile,
-        )
-
-        self.get_logger().info(f"Subscribed to /tf (looking for '{self.target_frame}')")
-        self.get_logger().info("Publishing to robot/ee_pose, robot/joint_states")
 
     def _get_tcp_position(self) -> np.ndarray:
         """Get the current TCP position from robot (Internal wxyz format)."""
         pose = self.robot.get_ee_pose()
         t = pose["t"]  # [x, y, z]
         q = pose["q"]  # [qx, qy, qz, qw] from robot
-        
+
         # Convert to internal [x, y, z, w, x, y, z]
         return np.array([t[0], t[1], t[2], q[3], q[0], q[1], q[2]])
 
-    def _callback_tf(self, msg: TFMessage):
-        """Callback function to process /tf messages."""
-        if msg is None:
-            return
+    def update(self, pos, quat_xyzw) -> np.ndarray:
+        """Process tracker pose and return retargeted robot pose."""
+        rel_pos, rel_quat_wxyz = self.signal_processor.process(pos, quat_xyzw)
+        tracker_pose = np.concatenate([rel_pos, rel_quat_wxyz], axis=0)
+        return self._retarget(tracker_pose)
 
-        # Iterate through all transforms in the message
-        found = False
-        target_transform = None
-
-        for t in msg.transforms:
-            if t.child_frame_id == self.target_frame:
-                target_transform = t.transform
-                found = True
-                break
-        
-        if not found:
-            return
-
-        with self.lock:
-            raw_pos = [
-                target_transform.translation.x,
-                target_transform.translation.y,
-                target_transform.translation.z
-            ]
-            raw_quat_xyzw = [
-                target_transform.rotation.x,
-                target_transform.rotation.y,
-                target_transform.rotation.z,
-                target_transform.rotation.w
-            ]
-            
-            rel_pos, rel_quat_wxyz = self.signal_processor.process(raw_pos, raw_quat_xyzw)
-            self.tracker_pose = np.concatenate([rel_pos, rel_quat_wxyz], axis=0)
-            self.tracker_pose_updated = True
-
-    def _retarget_base(self) -> np.ndarray:
+    def _retarget(self, tracker_pose) -> np.ndarray:
         """Retarget the tracker pose to robot arm pose with delta clamping."""
-        with self.lock:
-            tracker_pose = self.tracker_pose.copy()
-        
         desired_pose = self.init_arm_ee_pose.copy()
         desired_pose[:3] = tracker_pose[:3] * self.trans_scale + self.init_arm_ee_to_world[:3, 3]
-        
+
         tracker_rot_mat = quat2mat(tracker_pose[3:7])
         combined_rot = tracker_rot_mat @ self.init_arm_ee_to_world[:3, :3]
         desired_pose[3:7] = mat2quat(combined_rot)
-        
+
         # Clamp translation delta
         translation_delta = desired_pose[:3] - self.prev_target_pose[:3]
         clamped_translation_delta = clamp_vector(translation_delta, MAX_DELTA_TRANSLATION)
-        
+
         # Clamp rotation delta
         prev_rot = quat2mat(self.prev_target_pose[3:7])
         desired_rot = quat2mat(desired_pose[3:7])
@@ -218,57 +185,16 @@ class TrackerTeleopNode(Node):
         clamped_rotvec = clamp_vector(delta_rotvec, MAX_DELTA_ROTATION)
         clamped_delta_rot = R.from_rotvec(clamped_rotvec).as_matrix()
         clamped_rot = clamped_delta_rot @ prev_rot
-        
+
         # Build clamped target pose
         clamped_pose = self.prev_target_pose.copy()
         clamped_pose[:3] = self.prev_target_pose[:3] + clamped_translation_delta
         clamped_pose[3:7] = mat2quat(clamped_rot)
-        
+
         # Update previous target pose
         self.prev_target_pose = clamped_pose.copy()
-        
+
         return clamped_pose
-
-    def is_pose_updated(self) -> bool:
-        """Check if pose has been updated."""
-        with self.lock:
-            updated = self.tracker_pose_updated
-            self.tracker_pose_updated = False
-            return updated
-
-    def publish_robot_state(self):
-        """Publish current robot state to ROS2."""
-        timestamp = self.get_clock().now().to_msg()
-
-        try:
-            ee_pose = self.robot.get_ee_pose()
-            joint_positions = self.robot.get_joint_positions()
-        except Exception as e:
-            self.get_logger().warn(f"Failed to get robot state: {e}")
-            return
-
-        pose_msg = PoseStamped()
-        pose_msg.header.stamp = timestamp
-        pose_msg.header.frame_id = "world"
-        pose_msg.pose.position.x = ee_pose["t"][0]
-        pose_msg.pose.position.y = ee_pose["t"][1]
-        pose_msg.pose.position.z = ee_pose["t"][2]
-        pose_msg.pose.orientation.x = ee_pose["q"][0]
-        pose_msg.pose.orientation.y = ee_pose["q"][1]
-        pose_msg.pose.orientation.z = ee_pose["q"][2]
-        pose_msg.pose.orientation.w = ee_pose["q"][3]
-        self.robot_ee_pose_pub.publish(pose_msg)
-
-        joint_msg = JointState()
-        joint_msg.header.stamp = timestamp
-        joint_msg.name = [f"franka_joint_{i+1}" for i in range(7)]
-        joint_msg.position = list(joint_positions)
-        self.robot_joint_states_pub.publish(joint_msg)
-
-
-def run_ros2_spin(node: Node, stop_event: threading.Event):
-    while not stop_event.is_set() and rclpy.ok():
-        rclpy.spin_once(node, timeout_sec=0.01)
 
 
 @click.command()
@@ -276,11 +202,12 @@ def run_ros2_spin(node: Node, stop_event: threading.Event):
 @click.option("--port", default=DEFAULT_PORT, help="Robot server port")
 @click.option("--control-rate", default=CONTROL_RATE_HZ, help="Control rate in Hz")
 @click.option("--translation-scale", default=TRANSLATION_SCALE, help="Scale factor for translation")
-@click.option("--target-frame", default=DEFAULT_TARGET_FRAME, help="Target TF frame ID to track")
-def main(ip, port, control_rate, translation_scale, target_frame):
-    """Pose Tracker Teleoperation for Franka robot via ROS2 (TF)."""
+@click.option("--tracker-host", default="localhost", help="ZMQ host for tracker pose")
+@click.option("--tracker-port", default=5558, help="ZMQ SUB port for tracker pose")
+@click.option("--zmq-port", default=5557, help="ZMQ PUB port for state streaming")
+def main(ip, port, control_rate, translation_scale, tracker_host, tracker_port, zmq_port):
+    """Pose Tracker Teleoperation for Franka robot via ZMQ."""
 
-    rclpy.init()
     server_addr = f"tcp://{ip}:{port}"
 
     try:
@@ -289,35 +216,32 @@ def main(ip, port, control_rate, translation_scale, target_frame):
         cprint("Robot connected!", "green")
     except Exception as e:
         cprint(f"Error connecting to robot: {e}", "red")
-        rclpy.shutdown()
         return
 
-    teleop_node = TrackerTeleopNode(
-        robot=robot,
-        trans_scale=translation_scale,
-        target_frame=target_frame
-    )
+    # Initialize ZMQ
+    zmq_pub = ZMQStatePublisher(port=zmq_port)
+    cprint(f"ZMQ state publisher on port {zmq_port}", "green")
 
-    stop_event = threading.Event()
-    ros_thread = threading.Thread(
-        target=run_ros2_spin, args=(teleop_node, stop_event), daemon=True
-    )
-    ros_thread.start()
+    tracker_recv = TrackerZMQReceiver(host=tracker_host, port=tracker_port)
+    cprint(f"ZMQ tracker subscriber on {tracker_host}:{tracker_port}", "green")
+
+    teleop = TrackerTeleop(robot=robot, trans_scale=translation_scale)
 
     dt = 1.0 / control_rate
     error_count = 0
     skip_commands = 0
     waiting_for_first_pose = True
     robot.grasp_object()
+
     try:
-        while rclpy.ok():
+        while True:
             if waiting_for_first_pose:
-                if not teleop_node.is_pose_updated():
-                    cprint(f"Waiting for TF frame '{target_frame}'...", "yellow", end="\r")
+                if not tracker_recv.is_updated():
+                    cprint("Waiting for tracker pose...", "yellow", end="\r")
                     time.sleep(0.1)
                     continue
                 else:
-                    cprint(f"\nTarget frame '{target_frame}' found! Starting teleop...       ", "green")
+                    cprint("\nTracker found! Starting teleop...       ", "green")
                     waiting_for_first_pose = False
                     time.sleep(0.5)
                     continue
@@ -327,9 +251,15 @@ def main(ip, port, control_rate, translation_scale, target_frame):
                 time.sleep(dt)
                 continue
 
-            # Get retargeted pose (wxyz format)
-            desired_pose = teleop_node._retarget_base()
-            
+            # Get tracker pose
+            pos, quat_xyzw = tracker_recv.get_pose()
+            if pos is None:
+                time.sleep(dt)
+                continue
+
+            # Retarget to robot pose (wxyz format)
+            desired_pose = teleop.update(pos, quat_xyzw)
+
             # Convert to Robot format (xyzw)
             target_pose = [
                 desired_pose[0],  # x
@@ -356,16 +286,25 @@ def main(ip, port, control_rate, translation_scale, target_frame):
                 else:
                     cprint(f"Error: {e}", "red")
 
-            teleop_node.publish_robot_state()
+            # Publish state via ZMQ
+            try:
+                ee_pose = robot.get_ee_pose()
+                joints = robot.get_joint_positions()
+                try:
+                    gripper_width = robot.get_gripper_width()
+                except Exception:
+                    gripper_width = None
+                zmq_pub.publish(ee_pose, joints, gripper_width)
+            except Exception:
+                pass
+
             time.sleep(dt)
 
     except KeyboardInterrupt:
         cprint("\n\nShutting down...", "yellow")
     finally:
-        stop_event.set()
-        ros_thread.join(timeout=1.0)
-        teleop_node.destroy_node()
-        rclpy.shutdown()
+        tracker_recv.close()
+        zmq_pub.close()
 
 
 if __name__ == "__main__":

@@ -39,8 +39,8 @@ import hid
 import click
 from termcolor import cprint
 
-# sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from dex_control.robot.robot_client import FrankaRobotClient
+from dex_control.utils.zmq_publisher import ZMQStatePublisher
 
 # Default CONFIG
 DEFAULT_PRODUCT_ID = 50741  # Wireless=50735/50741, Wired=50770
@@ -164,12 +164,13 @@ class SpaceMouse:
 @click.option('--product-id', default=DEFAULT_PRODUCT_ID, help='SpaceMouse product ID')
 @click.option('--translation-scale', default=TRANSLATION_VELOCITY_SCALE, help='Translation velocity scale')
 @click.option('--control-rate', default=CONTROL_RATE_HZ, help='Control rate in Hz')
-def main(ip, port, vendor_id, product_id, translation_scale, control_rate):
+@click.option('--zmq-port', default=5557, help='ZMQ PUB port for state streaming')
+def main(ip, port, vendor_id, product_id, translation_scale, control_rate, zmq_port):
     """SpaceMouse teleoperation for Franka robot"""
-    
+
     # Build server address
     server_addr = f"tcp://{ip}:{port}"
-    
+
     # Connect to robot
     try:
         cprint(f"Connecting to robot at {server_addr}...", "cyan")
@@ -178,7 +179,11 @@ def main(ip, port, vendor_id, product_id, translation_scale, control_rate):
     except Exception as e:
         cprint(f"Error: {e}", "red")
         return
-    
+
+    # Initialize ZMQ publisher
+    zmq_pub = ZMQStatePublisher(port=zmq_port)
+    cprint(f"ZMQ state publisher on port {zmq_port}", "green")
+
     # Initialize SpaceMouse
     spacemouse = SpaceMouse(vendor_id, product_id)
     dt = 1.0 / control_rate
@@ -253,12 +258,24 @@ def main(ip, port, vendor_id, product_id, translation_scale, control_rate):
                     else:
                         cprint(f"Error: {e}", "red")
 
+            # Publish state via ZMQ
+            try:
+                ee_pose = robot.get_ee_pose()
+                joints = robot.get_joint_positions()
+                try:
+                    gripper_width = robot.get_gripper_width()
+                except Exception:
+                    gripper_width = None
+                zmq_pub.publish(ee_pose, joints, gripper_width)
+            except Exception:
+                pass
+
             time.sleep(dt)
-            
+
     except KeyboardInterrupt:
         cprint("\n\nShutting down...", "yellow")
         spacemouse.running = False
-
+        zmq_pub.close()
 
 
 if __name__ == "__main__":

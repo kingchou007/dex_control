@@ -25,16 +25,15 @@ pip install .
 
 ### Run
 
-> **Note:** After making changes locally, run `bash sync_infra.sh` to sync code to the NUC before starting the server.
-
 ```bash
-# 1. Start server on NUC
+# 1. Sync code to NUC (after any local changes)
+bash sync_infra.sh
+
+# 2. Start server on NUC
 python scripts/start_robot_server.py
 
-# 2. Control from client
+# 3. Connect from client
 python scripts/start_client.py
-# or directly
-python examples/0_basic_control.py
 ```
 
 ### Examples

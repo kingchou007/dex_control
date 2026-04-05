@@ -1,0 +1,11 @@
+# Kinesthetic Teaching Configuration
+# Usage: python examples/4_kinesthetic_teaching.py --config config/kinesthetic_teaching.yaml
+
+server:
+  ip: "192.168.1.6"
+  port: 4242
+
+teaching:
+  duration: 300.0          # Duration in seconds
+  impedance: 5.0           # Joint impedance (0=soft, 5-10=medium, 50=stiff)
+  publish_rate: 100.0      # ZMQ publish rate in Hz

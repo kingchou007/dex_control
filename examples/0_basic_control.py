@@ -1,7 +1,5 @@
 """Example script showing how to use FrankaRobotClient from other files.
 
-Author: Jinzhou Li
-
 This script demonstrates how to control the Franka robot using the Franka Robot Control Server.
 Before running this script, make sure the robot server(NUC) is running:
     python dex_control/robot/franka_wrapper.py

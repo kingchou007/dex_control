@@ -1,7 +1,5 @@
 """Client for Franka Robot Control Server.
 
-Author: Jinzhou Li
-
 Usage:
     from dex_control.robot.robot_client import FrankaRobotClient
 

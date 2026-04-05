@@ -1,8 +1,6 @@
 '''
 Robotiq Gripper Interface.
 
-Author: Jinzhou Li
-
 References:
   [1] https://assets.robotiq.com/website-assets/support_documents/document/2F-85_2F-140_Instruction_Manual_e-Series_PDF_20190206.pdf
   [2] https://github.com/castetsb/pyRobotiqGripper

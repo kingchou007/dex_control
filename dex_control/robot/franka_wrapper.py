@@ -1,7 +1,5 @@
 """High-level Python wrapper for Franka robot control.
 
-Author: Jinzhou Li
-
 Reference: https://timschneider42.github.io/franky/index.html
 """
 

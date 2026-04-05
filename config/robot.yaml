@@ -1,0 +1,29 @@
+# Franka Robot Configuration
+# Override from CLI: python scripts/start_robot_server.py server.ip=192.168.1.50
+# Use another config: python scripts/start_robot_server.py --config-name=my_robot
+
+server:
+  ip: "192.168.1.33"       # Franka robot IP (libfranka connection)
+  port: 4242                # ZeroRPC server port
+  # Set to true if client runs on a DIFFERENT machine (e.g. laptop → NUC).
+  # Set to false if server and client run on the SAME machine (localhost).
+  remote: true
+
+teleop: true
+
+home_position: [0.09162, -0.19826, -0.01990, -2.47323, -0.01307, 2.30397, 0.84809]
+
+controller:
+  type: "joint_impedance"          # "joint_impedance" or "cartesian_impedance"
+  dynamics_factor: 0.05
+  joint_impedance: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+  cartesian_impedance: [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]
+
+collision_thresholds:
+  joint: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+  cartesian: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+
+gripper:
+  enabled: true
+  speed: 0.02
+  force: 20.0

@@ -145,3 +145,4 @@ cython_debug/
 
 # Project specific
 *.egg-info/
+docs/superpowers/

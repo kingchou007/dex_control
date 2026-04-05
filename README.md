@@ -39,6 +39,28 @@ bash scripts/install.sh
 
 For the NUC-side ROS 2 controller setup, see [docs/ROBOT_PC.md](docs/ROBOT_PC.md).
 
+## Configuration
+
+Robot parameters are managed via Hydra config at `config/robot.yaml`. Edit this file instead of modifying code.
+
+**Two deployment modes:**
+
+| Mode | `server.remote` | Setup | Client connects to |
+|------|-----------------|-------|--------------------|
+| **Remote** (laptop → NUC) | `true` | Server on NUC, client on laptop | `tcp://<NUC_IP>:4242` |
+| **Local** (same machine) | `false` | Server and client on same PC | `tcp://localhost:4242` |
+
+Override any parameter from CLI:
+```bash
+python scripts/start_robot_server.py server.ip=192.168.1.50 server.port=5000
+```
+
+Use a different config file:
+```bash
+cp config/robot.yaml config/lab_a.yaml   # edit for your setup
+python scripts/start_robot_server.py --config-name=lab_a
+```
+
 ## Usage
 
 We recommend the following tmux layout:
@@ -52,19 +74,23 @@ We recommend the following tmux layout:
 +-------------------------+-------------------------+
 ```
 
-### 1. Start the Server (on NUC)
+### 1. Start the Server
 
 ```bash
 conda activate dex-control
-python dex_control/robot/franka_wrapper.py --ip <ROBOT_IP> --controller-type joint_impedance
+python scripts/start_robot_server.py
 ```
 
-### 2. Connect from Client (on Laptop)
+### 2. Connect from Client
 
 ```python
 from dex_control.robot.robot_client import FrankaRobotClient
 
+# Remote mode (laptop → NUC)
 robot = FrankaRobotClient(server_addr="tcp://<NUC_IP>:4242")
+
+# Local mode (same machine)
+robot = FrankaRobotClient(server_addr="tcp://localhost:4242")
 
 # Get robot state
 state = robot.get_ee_pose()
@@ -132,6 +158,7 @@ python scripts/reset_robot.py
 
 ```
 dex-control/
+├── config/             # Hydra YAML configs (robot.yaml, etc.)
 ├── dex_control/
 │   ├── robot/          # Server, client, and robot interface
 │   ├── teleop/         # Teleoperation backends (SpaceMouse, FACTr)
@@ -147,4 +174,4 @@ dex-control/
 
 ## Acknowledgments
 
-This repo is built with [franky](https://github.com/TimSchneider42/franky) as the low-level Franka control interface, and draws inspiration from [DROID](https://github.com/droid-dataset/droid) and [EVA](https://github.com/willjhliang/eva) to simplify the codebase.
+This repo is built with [franky](https://github.com/TimSchneider42/franky) as the low-level Franka control interface, and draws inspiration from [DROID](https://github.com/droid-dataset/droid) and [EVA](https://github.com/willjhliang/eva) communication setup to simplify the codebase.

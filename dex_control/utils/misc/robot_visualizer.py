@@ -31,7 +31,7 @@ from viser.extras import ViserUrdf
 FR3_JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)]
 
 # Default URDF path (relative to repo root)
-DEFAULT_URDF_PATH = Path(__file__).parent.parent.parent / "assets" / "fr3" / "fr3.urdf"
+DEFAULT_URDF_PATH = Path(__file__).parent.parent.parent.parent / "assets" / "fr3" / "fr3.urdf"
 
 
 class RobotVisualizer:

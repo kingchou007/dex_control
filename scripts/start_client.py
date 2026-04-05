@@ -11,14 +11,11 @@ Usage:
     python scripts/start_client.py --config config/my_robot.yaml
 """
 
-import subprocess
 import click
 import yaml
 from pathlib import Path
 
 from dex_control.robot.robot_client import FrankaRobotClient
-
-SYNC_SCRIPT = Path(__file__).parent.parent / "sync_infra.sh"
 
 DEFAULT_CONFIG = Path(__file__).parent.parent / "config" / "robot.yaml"
 
@@ -41,13 +38,8 @@ def load_server_addr(config_path: str = None) -> str:
 @click.command()
 @click.option("--config", default=None, help="Path to robot.yaml config")
 @click.option("--addr", default=None, help="Override server address (tcp://ip:port)")
-@click.option("--no-sync", is_flag=True, help="Skip syncing to NUC")
-def main(config, addr, no_sync):
+def main(config, addr):
     """Connect to robot server and print state."""
-    if not no_sync and SYNC_SCRIPT.exists():
-        print("[Sync] Syncing to NUC...")
-        subprocess.run(["bash", str(SYNC_SCRIPT)], check=False)
-
     if addr is None:
         addr = load_server_addr(config)
 

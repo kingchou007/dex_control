@@ -1,15 +1,19 @@
 #!/bin/bash
 
-LOCAL_DIR="/home/jinzhou/projects/temp"
-NUC_HOST="labuser@192.168.1.7"                
-NUC_DIR="/home/labuser/temp/temp"
+LOCAL_DIR="xxxx"
+NUC_HOST="xxxx"
+NUC_DIR="xxxx"
 
+# Only sync core files: dex_control module, config, scripts
 rsync -avz \
-  --exclude=".git" \
-  --exclude="data" \
+  --include="dex_control/" \
+  --include="dex_control/robot/***" \
+  --include="dex_control/__init__.py" \
+  --include="config/***" \
+  --include="setup.py" \
+  --include="pyproject.toml" \
+  --exclude="*" \
   --exclude="__pycache__" \
-  --exclude=".venv" \
-  --exclude="dependencies" \
-  "$LOCAL_DIR" "$NUC_HOST:$NUC_DIR"
+  "$LOCAL_DIR/" "$NUC_HOST:$NUC_DIR/"
 
 echo "Done!"

@@ -11,38 +11,15 @@ Usage:
 import time
 from typing import List, Dict, Any
 
-from pathlib import Path
-
 import numpy as np
 import zerorpc
-import yaml
-import click
 import spdlog
-
-DEFAULT_CONFIG = Path(__file__).parent.parent.parent / "config" / "robot.yaml"
-
-
-def load_server_addr(config_path: str = None) -> str:
-    """Load server address from robot.yaml config."""
-    path = Path(config_path) if config_path else DEFAULT_CONFIG
-    try:
-        with open(path, 'r') as f:
-            cfg = yaml.safe_load(f)
-        ip = cfg["server"]["ip"]
-        port = cfg["server"]["port"]
-        remote = cfg["server"].get("remote", True)
-        host = ip if remote else "localhost"
-        return f"tcp://{host}:{port}"
-    except (FileNotFoundError, KeyError):
-        return "tcp://192.168.1.7:4242"
 
 
 class FrankaRobotClient:
     """Robot client for controlling the Franka robot remotely via zerorpc."""
 
-    def __init__(self, server_addr: str = None, config_path: str = None, max_retries: int = 3):
-        if server_addr is None:
-            server_addr = load_server_addr(config_path)
+    def __init__(self, server_addr: str = "tcp://192.168.1.7:4242", max_retries: int = 3):
         self.server_addr = server_addr
         self.max_retries = max_retries
         self.log = spdlog.ConsoleLogger("FrankaClient")
@@ -183,23 +160,3 @@ class FrankaRobotClient:
 
     def is_gripper_grasped(self) -> bool:
         return bool(self._call("is_gripper_grasped"))
-
-
-@click.command()
-@click.option("--config", default=None, help="Path to robot.yaml config")
-@click.option("--addr", default=None, help="Override server address (tcp://ip:port)")
-def main(config, addr):
-    """Test connection and print robot state."""
-    robot = FrankaRobotClient(server_addr=addr, config_path=config)
-    try:
-        print(f"Joints: {robot.get_joint_positions()}")
-        print(f"EE Pose: {robot.get_ee_pose()}")
-        print(f"Gripper: {robot.get_gripper_width()}")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        robot.close()
-
-
-if __name__ == "__main__":
-    main()

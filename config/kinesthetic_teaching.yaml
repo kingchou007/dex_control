@@ -1,5 +1,6 @@
 # Kinesthetic Teaching Configuration
-# Usage: python examples/4_kinesthetic_teaching.py --config config/kinesthetic_teaching.yaml
+# Usage: python examples/4_kinesthetic_teaching.py
+# Override: python examples/4_kinesthetic_teaching.py server.host=192.168.1.7 teaching.impedance=10.0
 
 server:
   host: "192.168.1.6"
@@ -8,4 +9,5 @@ server:
 teaching:
   duration: 300.0          # Duration in seconds
   impedance: 5.0           # Joint impedance (0=soft, 5-10=medium, 50=stiff)
+  zmq_port: 5557           # ZMQ PUB port for state streaming
   publish_rate: 100.0      # ZMQ publish rate in Hz

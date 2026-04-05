@@ -41,6 +41,10 @@ ruckig = [
 zmq = [
     "pyzmq>=25.0.0",
 ]
+vis = [
+    "viser>=1.0.0",
+    "yourdfpy>=0.0.56",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -51,6 +55,8 @@ dev = [
 all = [
     "ruckig>=0.15.3",
     "pyzmq>=25.0.0",
+    "viser>=1.0.0",
+    "yourdfpy>=0.0.56",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",

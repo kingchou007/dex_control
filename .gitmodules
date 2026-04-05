@@ -1,3 +1,6 @@
 [submodule "dex_control/dependencies/libfranka"]
 	path = dex_control/dependencies/libfranka
 	url = https://github.com/frankarobotics/libfranka.git
+[submodule "dex_control/dependencies/quest3-controller-tracker"]
+	path = dex_control/dependencies/quest3-controller-tracker
+	url = https://github.com/tyduduke/quest3-controller-tracker.git

@@ -5,8 +5,6 @@ Purely Python Franka Research 3 control framework for teleoperation, data collec
 
 ## Features
 
-- **ROS-free** — pure Python, no ROS dependency;
-- **Client-server architecture** — server on NUC or local machine, control from any networked client;
 - **Teleoperation** — SpaceMouse, motion tracker, kinesthetic teaching, and VR;
 - **Data collection** — multi-camera (ZED, GoPro, RealSense) recording with synchronized trajectories
 - **Visualization** — browser-based visualizer
@@ -21,13 +19,16 @@ Purely Python Franka Research 3 control framework for teleoperation, data collec
 git clone --recurse-submodules https://github.com/Robot-Dexterity-Lab/dex-control
 cd dex-control
 pip install .
+
+# (Optional) Quest 3 VR controller support
+git submodule update --init dex_control/dependencies/quest3-controller-tracker
 ```
 
 ### Run
 
 ```bash
 # 1. Sync code to NUC (after any local changes)
-bash sync_infra.sh
+bash scripts/sync_infra.sh
 
 # 2. Start server on NUC
 python scripts/start_robot_server.py
@@ -50,6 +51,7 @@ python scripts/start_client.py
 
 ## Documentation
 
+- [Teleoperation](docs/TELEOP.md) — supported teleop methods and setup
 - [Robot PC Setup](docs/ROBOT_PC.md) — NUC-side server and controller setup
 - [Data Collection](docs/DATA_COLLECT.md) — recording SOP, camera setup
 - [Camera Calibration](scripts/calibration/CAMERA_CALI.md) — eye-to-hand calibration

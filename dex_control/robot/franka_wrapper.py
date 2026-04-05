@@ -1,39 +1,28 @@
-"""High-level python wrapper for Franka robot control.
+"""High-level Python wrapper for Franka robot control.
 
 Author: Jinzhou Li
-
-Provides a simplified interface for common robot operations:
-- Moving end-effector by translation/rotation (delta or absolute)
-- Moving joints to target positions
-- Getting current robot state
-- All control is non-blocking (optional) and asynchronous, so it's implemented in an event-driven manner.
 
 Reference: https://timschneider42.github.io/franky/index.html
 """
 
 import time
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Dict, Any, Union
 
 import numpy as np
 import spdlog
-from franky import *
-from omegaconf import DictConfig, OmegaConf
-from scipy.spatial.transform import Rotation as R
+from franky import (
+    Robot, Gripper, Affine,
+    CartesianMotion, JointMotion, JointVelocityMotion,
+    ReferenceType, ControlException,
+)
+from omegaconf import DictConfig
 
 
 class FrankaWrapper:
     """Wrapper class for controlling the Franka robot."""
 
     def __init__(self, cfg: DictConfig):
-        """Initialize the FrankaWrapper.
-
-        Args:
-            cfg: Hydra DictConfig with keys: server, controller, gripper,
-                 home_position, collision_thresholds, teleop.
-        """
         self.cfg = cfg
-
-        # Initialize logger
         self.log = spdlog.ConsoleLogger("FrankaWrapper")
         self.log.set_level(spdlog.LogLevel.INFO)
 
@@ -43,52 +32,32 @@ class FrankaWrapper:
         self.robot = Robot(ip)
         self.teleop = cfg.get("teleop", False)
         self.robot.recover_from_errors()
+
         self.franka_hand = cfg.gripper.enabled
+        self._gravity_comp_active = False
         self._setup_franka_hand()
         self._setup_home_position()
-        self._setup_controller_parameters(cfg.controller.type)
+        self._setup_controller(cfg.controller.type)
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
 
     def _setup_home_position(self):
-        """Set up home position (faster)."""
         home = list(self.cfg.home_position)
-        joint_motion = JointMotion(home)
         self.robot.relative_dynamics_factor = 0.2
-        self.robot.move(joint_motion, asynchronous=False)
+        self.robot.move(JointMotion(home), asynchronous=False)
         time.sleep(0.1)
-        self.log.info("Set up home position (fast)")
+        self.log.info("Moved to home position")
 
-    def _setup_controller_parameters(self, controller_type: str):
-        """Set up controller parameters based on the chosen controller type.
-
-        Args:
-            controller_type: Type of controller ("cartesian_impedance" or "joint_impedance").
-
-        Raises:
-            ValueError: If an invalid controller type is provided.
-
-        Notes:
-            - Sets the robot's collision behavior thresholds (currently all set to 100).
-            - For "cartesian_impedance", sets cartesian impedance to [1000, 1000, 1000, 30, 30, 30].
-            - For "joint_impedance", sets soft joint impedance ([50.0, ...]).
-                * The stiffness is only available during the robot moving, not when stopped.
-                * Might require a long-term running loop to keep the stiffness active.
-                * Example settings for stiffer impedance:
-                    self.robot.set_joint_impedance([300.0, 300.0, 300.0, 300.0, 300.0, 300.0, 300.0])
-                    self.robot.set_joint_impedance([800.0, 800.0, 800.0, 800.0, 800.0, 800.0, 800.0])
-            - The relative dynamics factor is set to 0.1.
-                * Lower = slower but smoother; Higher = faster but more prone to errors.
-                * For safe teleoperation, a value of 0.05 is typical; tune as needed for your application.
-        """
+    def _setup_controller(self, controller_type: str):
         col = self.cfg.collision_thresholds
-        col_joint = list(col.joint)
-        col_cart = list(col.cartesian)
-
-        self.log.info("Set collision behavior")
-        self.robot.set_collision_behavior(col_joint, col_joint, col_cart, col_cart)
+        self.robot.set_collision_behavior(
+            list(col.joint), list(col.joint),
+            list(col.cartesian), list(col.cartesian),
+        )
 
         ctrl = self.cfg.controller
-
-        self.log.info(f"Set Controller Type: {controller_type}")
         if controller_type == "cartesian_impedance":
             self.robot.set_cartesian_impedance(list(ctrl.cartesian_impedance))
         elif controller_type == "joint_impedance":
@@ -97,200 +66,47 @@ class FrankaWrapper:
             raise ValueError(f"Invalid controller type: {controller_type}")
 
         self.robot.relative_dynamics_factor = ctrl.dynamics_factor
+        self.log.info(f"Controller: {controller_type}, dynamics_factor: {ctrl.dynamics_factor}")
 
     def _setup_franka_hand(self):
-        """Set up franka hand parameters."""
         if self.franka_hand:
-            try:
-                from franky import Gripper
-                self.gripper = Gripper(self.ip)
-            except ImportError:
-                self.log.warn("Warning: Gripper not found in franky.")
-
+            self.gripper = Gripper(self.ip)
             self.speed = self.cfg.gripper.speed
             self.force = self.cfg.gripper.force
+        self.log.info(f"Franka hand enabled: {self.franka_hand}")
 
-        self.log.info(f"Set up franka hand: {self.franka_hand}")
+    # ------------------------------------------------------------------
+    # Error Recovery
+    # ------------------------------------------------------------------
 
-    def recover_from_errors(self):
-        """Recover from errors automatically.
-
-        Call this method when the robot enters reflex/error state to attempt
-        automatic recovery without manual intervention.
-
-        Returns:
-            bool: True if recovery succeeded, False otherwise.
-        """
+    def recover_from_errors(self) -> bool:
         try:
             self.robot.recover_from_errors()
-            self.log.info("Successfully recovered from errors")
+            self.log.info("Recovered from errors")
             return True
         except Exception as e:
-            self.log.error(f"Failed to recover from errors: {e}")
+            self.log.error(f"Recovery failed: {e}")
             return False
 
-    def robust_execute_motion(self, motion, asynchronous: bool = False, max_retries: int = 3):
-        """Execute a motion command with automatic retry on ControlException.
-
-        Handles common errors like:
-        - Reflex errors (collision detection triggered)
-        - Communication errors or disconnections
-        - Motion aborted due to safety limits
-
-        The method automatically attempts error recovery between retries.
-
-        Args:
-            motion: The motion object (CartesianMotion, JointMotion, etc.)
-            asynchronous: If True, return immediately without waiting for motion to complete.
-            max_retries: Maximum number of retry attempts (default: 3).
-
-        Returns:
-            bool: True if motion succeeded, False if all retries failed.
-
-        See also:
-            https://timschneider42.github.io/franky/classfranky_1_1_control_exception.html
-        """
+    def robust_execute_motion(self, motion, asynchronous: bool = False, max_retries: int = 3) -> bool:
+        """Execute motion with automatic retry on ControlException."""
         for attempt in range(max_retries):
             try:
                 self.robot.move(motion, asynchronous=asynchronous)
                 return True
             except ControlException as e:
-                # Common ControlException causes: reflex (collision), disconnection, safety violations
-                if attempt < max_retries - 1:
-                    self.log.warn(f"Attempt {attempt+1}/{max_retries}: ControlException (reflex/error): {e}")
-                    self.log.info("Attempting automatic recovery...")
-                else:
-                    self.log.error(f"Attempt {attempt+1}/{max_retries}: ControlException: {e}")
+                self.log.warn(f"Attempt {attempt+1}/{max_retries}: {e}")
                 self.robot.recover_from_errors()
 
-        # If we get here, all attempts failed
-        self.log.error(f"Failed to move after {max_retries} attempts. Manual intervention may be required.")
+        self.log.error(f"Failed after {max_retries} attempts")
         return False
 
-
-    # ---------------------------------------------------------
-    # Gripper Implementation 
-    # C++ Documentation: https://timschneider42.github.io/franky/classfranky_1_1_gripper.html#ad496a52d3a7a01926c8fd6e679901a89
-    # ---------------------------------------------------------
-    def move_gripper(self, target_width: float, speed: float = None, asynchronous: bool = False):
-        """Move the gripper to the given target width.
-        
-        Args:
-            target_width: Target width [m].
-            speed: Speed [m/s]. If None, use default self.speed.
-            asynchronous: If True, returns immediately.
-        """
-        if not self.franka_hand:
-            self.log.warn("Franka hand not enabled.")
-            return False
-
-        cmd_speed = speed if speed is not None else self.speed
-
-        if asynchronous:
-            self.gripper.move_async(target_width, cmd_speed)
-            return True
-        else:
-            return self.gripper.move(target_width, cmd_speed)
-
-    def grasp_object(self, width: float = 0.0, speed: float = None, force: float = None, 
-                     epsilon_inner: float = 0.005, epsilon_outer: float = 0.005, 
-                     asynchronous: bool = False):
-        """Grasp object with specific parameters.
-        
-        Matches the flexible API defined in the Client.
-        """
-        if not self.franka_hand:
-            self.log.warn("Franka hand not enabled.")
-            return False
-
-        cmd_speed = speed if speed is not None else self.speed
-        cmd_force = force if force is not None else self.force
-
-        if asynchronous:
-            self.gripper.grasp_async(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
-            return True
-        else:
-            return self.gripper.grasp(width, cmd_speed, cmd_force, epsilon_inner, epsilon_outer)
-
-    def open_gripper(self, speed: float = None, asynchronous: bool = False):
-        """Release object / Open gripper fully.
-        
-        Renamed from release_object to match Client API 'open_gripper' 
-        (or you can keep release_object and map it in RPC).
-        """
-        if not self.franka_hand:
-            self.log.warn("Franka hand not enabled.")
-            return False
-
-        cmd_speed = speed if speed is not None else self.speed
-
-        if asynchronous:
-            self.gripper.open_async(cmd_speed)
-            return True
-        else:
-            self.gripper.open(cmd_speed)
-            return True
-
-    def stop_gripper(self, asynchronous: bool = False):
-        """Stop the gripper motion immediately."""
-        if not self.franka_hand:
-            return False
-            
-        if asynchronous:
-            self.gripper.stop_async()
-            return True
-        else:
-            self.gripper.stop()
-            return True
-
-    def homing_gripper(self, asynchronous: bool = False):
-        """Calibrate the gripper."""
-        if not self.franka_hand:
-            return False
-
-        if asynchronous:
-            self.gripper.homing_async()
-            return True
-        else:
-            self.gripper.homing()
-            return True
-
     # ------------------------------------------------------------------
-    # Gripper State Methods
+    # State
     # ------------------------------------------------------------------
-    def get_gripper_width(self) -> float:
-        """Get the current width of the gripper."""
-        if not self.franka_hand:
-            return 0.0
-
-        state = self.gripper.read_once() 
-        return state.width
-
-    def get_gripper_max_width(self) -> float:
-        """Get the maximum width of the gripper."""
-        if not self.franka_hand:
-            return 0.0
-
-        state = self.gripper.read_once()
-        return state.max_width
-
-    def is_gripper_grasped(self) -> bool:
-        """Check if an object is currently grasped."""
-        if not self.franka_hand:
-            return False
-
-        state = self.gripper.read_once()
-        return state.is_grasped
 
     def get_state(self) -> Dict[str, List[float]]:
-        """Retrieve current robot state.
-
-        Returns:
-            dict: Dictionary containing all available robot state information.
-
-        See also:
-            https://timschneider42.github.io/franky/structfranky_1_1_robot_state.html
-        """
+        """Get full robot state."""
         state = self.robot.state
         return {
             "q": np.array(state.q).tolist(),
@@ -305,191 +121,164 @@ class FrankaWrapper:
         }
 
     def get_joint_positions(self) -> List[float]:
-        """Get the current joint positions of the robot.
-
-        Returns:
-            List[float]: List of joint angles [q1, q2, ..., q7].
-                        Converted to list for RPC serialization.
-        """
         return np.array(self.robot.state.q).tolist()
 
     def get_ee_pose(self) -> Dict[str, List[float]]:
-        """Get the end-effector translation and quaternion.
-
-        Returns:
-            dict: Dictionary containing:
-                "t": List of translation components [x, y, z].
-                "q": List of quaternion components [x, y, z, w].
-        """
+        """Returns dict with 't' [x,y,z] and 'q' [qx,qy,qz,qw]."""
         ee = self.robot.state.O_T_EE
         return {
             "t": np.array(ee.translation).tolist(),
             "q": np.array(ee.quaternion).tolist(),
         }
 
-    def get_torques(self) -> dict:
-        """Get the current torques of the robot.
-        Returns:
-            Dictionary containing 'tau_J' (joint torques)
-        """
-        return self.robot.state.tau_J
+    def get_torques(self) -> List[float]:
+        return np.array(self.robot.state.tau_J).tolist()
 
     def get_external_torques(self) -> List[float]:
-        """Get the external torques on each joint.
+        return np.array(self.robot.state.tau_ext_hat_filtered).tolist()
 
-        Returns:
-            List[float]: List of 7 external torques (one per joint) in Nm.
-                        Converted to list for RPC serialization.
-        """
-        # Note: tau_ext_hat_filtered is a property (numpy array), not a method
-        return self.robot.state.tau_ext_hat_filtered()
+    # ------------------------------------------------------------------
+    # Motion
+    # ------------------------------------------------------------------
 
-    def move_ee_pose(
-        self,
-        target_ee_pose: Union[List[float], Affine],
-        asynchronous: bool = True,
-        delta: bool = True
-    ) -> bool:
-        """Move the end-effector to a target pose.
+    def move_ee_pose(self, target_ee_pose: Union[List[float], Affine],
+                     asynchronous: bool = True, delta: bool = True) -> bool:
+        """Move EE to target pose.
 
         Args:
-            target_ee_pose: Target pose as [x, y, z], [qx, qy, qz, qw], or [x, y, z, qx, qy, qz, qw].
-            asynchronous: If True, return immediately without waiting for motion to complete.
-            delta: If True, interpret target_ee_pose as relative to current pose.
-                   If False, interpret as absolute pose.
-
-        Returns:
-            bool: True if motion succeeded, False if all retries failed.
-
-        See also:
-            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_motion.html
+            target_ee_pose: [x,y,z] | [qx,qy,qz,qw] | [x,y,z,qx,qy,qz,qw] or Affine.
+            asynchronous: Return immediately without waiting.
+            delta: Interpret as relative to current pose.
         """
         reference_type = ReferenceType.Relative if delta else ReferenceType.Absolute
 
         if isinstance(target_ee_pose, list):
-            pose_len = len(target_ee_pose)
-            if pose_len == 3:
+            n = len(target_ee_pose)
+            if n == 3:
                 target_ee_pose = Affine(target_ee_pose)
-            elif pose_len == 4:
+            elif n == 4:
                 target_ee_pose = Affine([0.0, 0.0, 0.0], target_ee_pose)
-            elif pose_len == 7:
+            elif n == 7:
                 target_ee_pose = Affine(target_ee_pose[:3], target_ee_pose[3:])
             else:
-                raise ValueError(
-                    f"Invalid target_ee_pose length: {pose_len}. "
-                    "Expected 3, 4, or 7."
-                )
+                raise ValueError(f"Invalid pose length: {n}. Expected 3, 4, or 7.")
 
-        target_motion = CartesianMotion(target_ee_pose, reference_type=reference_type)
-        return self.robust_execute_motion(target_motion, asynchronous=asynchronous)
+        motion = CartesianMotion(target_ee_pose, reference_type=reference_type)
+        return self.robust_execute_motion(motion, asynchronous=asynchronous)
 
-    def move_joints(
-        self,
-        target_joint_positions: List[float],
-        asynchronous: bool = False
-    ) -> bool:
-        """Move joints to the given target positions.
-
-        Args:
-            target_joint_positions: List of target joint angles.
-            asynchronous: If True, return immediately without waiting for motion to complete.
-
-        Returns:
-            bool: True if motion succeeded, False if all retries failed.
-
-        See also:
-            https://timschneider42.github.io/franky/classfranky_1_1_joint_motion.html
-        """
-        joint_motion = JointMotion(target_joint_positions)
-        return self.robust_execute_motion(joint_motion, asynchronous=asynchronous)
-
-    def move_ee_waypoints(self, waypoints: List[Any], delta: bool = True):
-        """Move the end-effector through a sequence of waypoints.
-
-        Args:
-            waypoints: List of Cartesian poses/waypoints.
-            delta: If True, interpret waypoints as relative motions.
-
-        See also:
-            https://timschneider42.github.io/franky/classfranky_1_1_cartesian_waypoint_motion.html
-        """
-        raise NotImplementedError("Not tested on real robot")
-
-    def move_joint_waypoints(self, waypoints: List[List[float]]):
-        """Move the robot's joints through a sequence of joint angle waypoints.
-
-        Args:
-            waypoints: List of joint configurations (each a list of angles).
-
-        See also:
-            https://timschneider42.github.io/franky/classfranky_1_1_joint_waypoint_motion.html
-        """
-        raise NotImplementedError("Not tested on real robot")
-
-    def move_ee_cartesian_velocity(self):
-        """Control EE using a specified Cartesian velocity (Not yet implemented)."""
-        raise NotImplementedError("Not yet implemented")
-
-    def move_joint_cartesian_velocity(self):
-        """Control robot with joint or Cartesian velocity commands (Not yet implemented)."""
-        raise NotImplementedError("Not yet implemented")
+    def move_joints(self, target_joint_positions: List[float],
+                    asynchronous: bool = False) -> bool:
+        return self.robust_execute_motion(
+            JointMotion(target_joint_positions), asynchronous=asynchronous
+        )
 
     def set_joint_impedance(self, impedance: List[float]) -> bool:
-        """Set joint impedance values.
-
-        Args:
-            impedance: List of 7 impedance values (one per joint).
-                      Lower values = more compliant/backdrivable.
-                      Set all to 0 for pure gravity compensation.
-
-        Returns:
-            bool: True if successful.
-        """
         self.robot.set_joint_impedance(impedance)
-        self.log.info(f"Set joint impedance to {impedance}")
+        self.log.info(f"Joint impedance: {impedance}")
         return True
 
-    def start_gravity_compensation(self, duration: float = 3600.0) -> bool:
+    def start_gravity_compensation(self, duration: float = 3600.0,
+                                   joint_impedance: float = 0.0) -> bool:
         """Start gravity compensation mode for kinesthetic teaching.
 
-        Uses JointVelocityMotion with zero velocities and zero impedance
-        to allow manual manipulation of the robot while maintaining pose.
-
         Args:
-            duration: Duration in seconds (default: 1 hour).
-
-        Returns:
-            bool: True if motion started successfully.
+            duration: Duration in seconds.
+            joint_impedance: Impedance per joint (0=fully compliant, 50=stiff).
         """
-        # Set zero impedance for full compliance
-        self.robot.set_joint_impedance([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.log.info("Set joint impedance to zero for gravity compensation")
-
-        # Create zero velocity motion with long duration
-        zero_velocities = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        velocity_motion = JointVelocityMotion(zero_velocities, duration)
-
-        self.log.info(f"Starting gravity compensation mode for {duration}s")
-        self.log.info("Robot is now in kinesthetic teaching mode - you can manually guide it")
+        imp = [joint_impedance] * 7
+        self.robot.set_joint_impedance(imp)
+        self.log.info(f"Gravity compensation: impedance={joint_impedance}, duration={duration}s")
 
         try:
-            self.robot.move(velocity_motion, asynchronous=True)
+            zero_vel = [0.0] * 7
+            self.robot.move(JointVelocityMotion(zero_vel, duration), asynchronous=True)
+            self._gravity_comp_active = True
             return True
         except ControlException as e:
             self.log.error(f"Failed to start gravity compensation: {e}")
+            self._gravity_comp_active = False
             return False
 
-    def stop_motion(self) -> bool:
-        """Stop any ongoing motion.
+    def is_gravity_compensation_active(self) -> bool:
+        return self._gravity_comp_active
 
-        Returns:
-            bool: True if successful.
-        """
+    def stop_gravity_compensation(self) -> bool:
+        self._gravity_comp_active = False
+        return self.stop_motion()
+
+    def stop_motion(self) -> bool:
         try:
             self.robot.stop()
-            self.log.info("Motion stopped")
             return True
         except Exception as e:
             self.log.error(f"Failed to stop motion: {e}")
             return False
 
+    # ------------------------------------------------------------------
+    # Gripper
+    # ------------------------------------------------------------------
+
+    def move_gripper(self, target_width: float, speed: float = None,
+                     asynchronous: bool = False) -> bool:
+        if not self.franka_hand:
+            return False
+        s = speed or self.speed
+        if asynchronous:
+            self.gripper.move_async(target_width, s)
+            return True
+        return self.gripper.move(target_width, s)
+
+    def grasp_object(self, width: float = 0.0, speed: float = None,
+                     force: float = None, epsilon_inner: float = 0.005,
+                     epsilon_outer: float = 0.005, asynchronous: bool = False) -> bool:
+        if not self.franka_hand:
+            return False
+        s = speed or self.speed
+        f = force or self.force
+        if asynchronous:
+            self.gripper.grasp_async(width, s, f, epsilon_inner, epsilon_outer)
+            return True
+        return self.gripper.grasp(width, s, f, epsilon_inner, epsilon_outer)
+
+    def open_gripper(self, speed: float = None, asynchronous: bool = False) -> bool:
+        if not self.franka_hand:
+            return False
+        s = speed or self.speed
+        if asynchronous:
+            self.gripper.open_async(s)
+        else:
+            self.gripper.open(s)
+        return True
+
+    def stop_gripper(self, asynchronous: bool = False) -> bool:
+        if not self.franka_hand:
+            return False
+        if asynchronous:
+            self.gripper.stop_async()
+        else:
+            self.gripper.stop()
+        return True
+
+    def homing_gripper(self, asynchronous: bool = False) -> bool:
+        if not self.franka_hand:
+            return False
+        if asynchronous:
+            self.gripper.homing_async()
+        else:
+            self.gripper.homing()
+        return True
+
+    def get_gripper_width(self) -> float:
+        if not self.franka_hand:
+            return 0.0
+        return self.gripper.read_once().width
+
+    def get_gripper_max_width(self) -> float:
+        if not self.franka_hand:
+            return 0.0
+        return self.gripper.read_once().max_width
+
+    def is_gripper_grasped(self) -> bool:
+        if not self.franka_hand:
+            return False
+        return self.gripper.read_once().is_grasped

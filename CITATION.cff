@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "dex-control: A Python Franka Control Framework"
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Li
+    given-names: Jinzhou
+    website: https://kingchou007.github.io/
+  - family-names: Cheng
+    given-names: Xianyi
+url: https://github.com/Robot-Dexterity-Lab/dex-control
+type: software
+date-released: 2025-11-25
+preferred-citation:
+  type: software
+  title: "dex-control: A Python Franka Control Framework"
+  authors:
+    - family-names: Li
+      given-names: Jinzhou
+    - family-names: Cheng
+      given-names: Xianyi
+  year: 2025
+  url: https://github.com/Robot-Dexterity-Lab/dex-control

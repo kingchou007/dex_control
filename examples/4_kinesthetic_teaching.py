@@ -10,18 +10,19 @@ Usage:
 
 import click
 import yaml
+from pathlib import Path
 
 from dex_control.teleop.kinesthetic_teaching import KinestheticTeaching
 
 
-DEFAULT_CONFIG = "config/kinesthetic_teaching.yaml"
+DEFAULT_CONFIG = Path(__file__).parent.parent / "config" / "kinesthetic_teaching.yaml"
 
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
     try:
         with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+            return yaml.safe_load(f) or {}
     except FileNotFoundError:
         return {}
 

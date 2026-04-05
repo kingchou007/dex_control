@@ -26,10 +26,11 @@ def load_server_addr(config_path: str = None) -> str:
     try:
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
-        ip = cfg["server"]["ip"]
+        host = cfg["server"]["host"]
         port = cfg["server"]["port"]
         remote = cfg["server"].get("remote", True)
-        host = ip if remote else "localhost"
+        if not remote:
+            host = "localhost"
         return f"tcp://{host}:{port}"
     except (FileNotFoundError, KeyError):
         return "tcp://192.168.1.7:4242"

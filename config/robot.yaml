@@ -1,9 +1,10 @@
 # Franka Robot Configuration
-# Override from CLI: python scripts/start_robot_server.py server.ip=192.168.1.50
+# Override from CLI: python scripts/start_robot_server.py server.robot_ip=192.168.1.50
 # Use another config: python scripts/start_robot_server.py --config-name=my_robot
 
 server:
-  ip: "192.168.1.33"       # Franka robot IP (libfranka connection)
+  robot_ip: "192.168.1.33"  # Franka arm IP (libfranka connection)
+  host: "192.168.1.33"      # ZeroRPC bind/connect address (NUC IP)
   port: 4242                # ZeroRPC server port
   # Set to true if client runs on a DIFFERENT machine (e.g. laptop → NUC).
   # Set to false if server and client run on the SAME machine (localhost).

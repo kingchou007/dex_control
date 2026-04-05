@@ -24,10 +24,10 @@ class FrankaWrapper:
         self.log = spdlog.ConsoleLogger("FrankaWrapper")
         self.log.set_level(spdlog.LogLevel.INFO)
 
-        ip = cfg.server.ip
-        self.log.info(f"Initializing FrankaWrapper with IP: {ip}")
-        self.ip = ip
-        self.robot = Robot(ip)
+        robot_ip = cfg.server.robot_ip
+        self.log.info(f"Initializing FrankaWrapper with robot IP: {robot_ip}")
+        self.robot_ip = robot_ip
+        self.robot = Robot(robot_ip)
         self.teleop = cfg.get("teleop", False)
         self.robot.recover_from_errors()
 
@@ -68,7 +68,7 @@ class FrankaWrapper:
 
     def _setup_franka_hand(self):
         if self.franka_hand:
-            self.gripper = Gripper(self.ip)
+            self.gripper = Gripper(self.robot_ip)
             self.speed = self.cfg.gripper.speed
             self.force = self.cfg.gripper.force
         self.log.info(f"Franka hand enabled: {self.franka_hand}")

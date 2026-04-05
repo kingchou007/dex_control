@@ -44,7 +44,7 @@ def main(config_path, ip, port, duration, impedance, zmq_port, publish_rate):
 
     # CLI args override YAML config
     teaching = KinestheticTeaching(
-        ip=ip or server_cfg.get("ip", "192.168.1.6"),
+        ip=ip or server_cfg.get("host", "192.168.1.6"),
         port=port or server_cfg.get("port", 4242),
         duration=duration or teaching_cfg.get("duration", 300.0),
         impedance=impedance or teaching_cfg.get("impedance", 5.0),

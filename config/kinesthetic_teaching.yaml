@@ -2,7 +2,7 @@
 # Usage: python examples/4_kinesthetic_teaching.py --config config/kinesthetic_teaching.yaml
 
 server:
-  ip: "192.168.1.6"
+  host: "192.168.1.6"
   port: 4242
 
 teaching:

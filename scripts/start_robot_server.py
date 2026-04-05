@@ -5,7 +5,7 @@ Usage:
     python scripts/start_robot_server.py
 
     # Override params from CLI
-    python scripts/start_robot_server.py server.ip=192.168.1.50 server.port=5000
+    python scripts/start_robot_server.py server.robot_ip=192.168.1.50 server.port=5000
 
     # Use a different config file (config/my_robot.yaml)
     python scripts/start_robot_server.py --config-name=my_robot
